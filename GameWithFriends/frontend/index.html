@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#101a18">
+    <title>GameWithFriends — 和朋友一起玩</title>
+    <link rel="stylesheet" href="index.css">
+</head>
+<body>
+    <div class="page-shell">
+        <header class="topbar">
+            <div class="brand"><span class="brand-mark">G</span><span>GameWithFriends</span></div>
+            <span class="top-note">好游戏，和好朋友一起玩</span>
+            <div class="user-bar hidden" id="userBar">
+                <span>你好，<strong id="currentUser"></strong></span>
+                <button class="secondary" id="logoutButton" type="button">退出登录</button>
+            </div>
+        </header>
+
+        <main>
+            <section class="auth-layout" id="authView" aria-label="账号登录与管理员账号管理">
+                <div class="intro">
+                    <div class="eyebrow">YOUR FRIENDS, YOUR GAME</div>
+                    <h1>快乐加倍，<br><span>好友开局。</span></h1>
+                    <p class="intro-copy">和朋友相聚的时光，不如来一场轻松的游戏。登录账号，马上开始你们的游戏时光。</p>
+                    <div class="intro-foot">
+                        <div class="avatar-stack" aria-hidden="true"><span>🎱</span><span>🀄</span><span>✦</span></div>
+                        <span>台球 · 麻将 · 好友相伴</span>
+                    </div>
+                </div>
+
+                <div class="auth-card">
+                    <div class="card-heading" id="authHeading">
+                        <h2>欢迎回来</h2>
+                        <p>登录账号，继续和朋友一起玩。</p>
+                    </div>
+                    <form id="authForm">
+                        <div class="field">
+                            <label for="username">用户名</label>
+                            <input id="username" name="username" autocomplete="username" minlength="3" maxlength="20" placeholder="3–20 位字母、数字或下划线" required>
+                        </div>
+                        <div class="field">
+                            <label for="password">密码</label>
+                            <input id="password" name="password" type="password" autocomplete="current-password" minlength="8" maxlength="128" placeholder="输入密码" required>
+                        </div>
+                        <button class="primary" type="submit">登录</button>
+                        <p class="status" id="authStatus" role="status" aria-live="polite"></p>
+                    </form>
+
+                    <button class="back-link" id="adminLoginLink" type="button">管理员登录</button>
+
+                    <form class="hidden" id="adminLoginForm">
+                        <div class="card-heading">
+                            <h2>管理员登录</h2>
+                            <p>验证管理员身份后可创建用户账号。</p>
+                        </div>
+                        <div class="field">
+                            <label for="adminUsername">管理员账号</label>
+                            <input id="adminUsername" name="username" autocomplete="username" required>
+                        </div>
+                        <div class="field">
+                            <label for="adminPassword">管理员密码</label>
+                            <input id="adminPassword" name="password" type="password" autocomplete="current-password" required>
+                        </div>
+                        <button class="primary" type="submit">管理员登录</button>
+                        <p class="status" id="adminLoginStatus" role="status" aria-live="polite"></p>
+                        <button class="back-link" id="backToUserLogin" type="button">返回用户登录</button>
+                    </form>
+
+                    <section class="hidden" id="adminConsole" aria-label="管理员账号管理">
+                        <div class="card-heading">
+                            <h2>创建用户账号</h2>
+                            <p>只有管理员可以为玩家创建账号。</p>
+                        </div>
+                        <form id="createAccountForm">
+                            <div class="field">
+                                <label for="newUsername">新用户名</label>
+                                <input id="newUsername" name="username" autocomplete="off" minlength="3" maxlength="20" placeholder="3–20 位字母、数字或下划线" required>
+                            </div>
+                            <div class="field">
+                                <label for="newPassword">初始密码</label>
+                                <input id="newPassword" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" placeholder="至少 8 位" required>
+                            </div>
+                            <button class="primary" type="submit">创建账号</button>
+                            <p class="status" id="createAccountStatus" role="status" aria-live="polite"></p>
+                        </form>
+                    </section>
+                </div>
+            </section>
+
+            <section class="games-view hidden" id="gamesView" aria-label="选择游戏">
+                <div class="games-heading">
+                    <div class="eyebrow">PICK YOUR NEXT GAME</div>
+                    <h1>准备玩点<span>什么？</span></h1>
+                    <p>选一款游戏，邀请朋友加入你们的欢乐时光。</p>
+                </div>
+                <div class="game-grid">
+                    <button class="game-card" type="button" id="billiardsCard">
+                        <div>
+                            <div class="game-icon" aria-hidden="true">🎱</div>
+                            <h2>台球</h2>
+                            <p>瞄准、出杆，和朋友来一场精彩的桌球对决。</p>
+                        </div>
+                        <div class="game-meta"><span>精准较量 · 休闲竞技</span><strong>选择游戏　↗</strong></div>
+                    </button>
+                    <button class="game-card mahjong" type="button" id="mahjongCard">
+                        <div>
+                            <div class="game-icon" aria-hidden="true">🀄</div>
+                            <h2>麻将</h2>
+                            <p>摸牌出牌，凑齐好友，体验熟悉的牌桌乐趣。</p>
+                        </div>
+                        <div class="game-meta"><span>策略对局 · 好友开桌</span><strong>选择游戏　↗</strong></div>
+                    </button>
+                </div>
+                <p class="status" id="gameStatus" role="status" aria-live="polite"></p>
+            </section>
+
+            <section class="games-view billiards-view hidden" id="billiardsView" aria-label="台球房间">
+                <div class="games-heading room-page-heading">
+                    <div class="eyebrow">BILLIARDS WITH FRIENDS</div>
+                    <h1 id="billiardsHeading">来一场<span>台球对决</span></h1>
+                    <p id="billiardsDescription">创建房间邀请好友，或输入房间号加入一场游戏。</p>
+                </div>
+
+                <div class="room-actions" id="roomActions">
+                    <form class="room-action-card" id="createRoomForm">
+                        <div class="action-icon">＋</div>
+                        <h2>创建新房间</h2>
+                        <p>成为房主，设置本局玩家人数。</p>
+                        <label for="roomCapacity">游戏人数</label>
+                        <div class="inline-field">
+                            <input id="roomCapacity" type="number" min="2" max="54" value="4" required>
+                            <span>人</span>
+                        </div>
+                        <button class="primary" type="submit">创建房间</button>
+                    </form>
+
+                    <form class="room-action-card" id="joinRoomForm">
+                        <div class="action-icon">↗</div>
+                        <h2>加入房间</h2>
+                        <p>输入朋友分享的房间号，加入台球游戏。</p>
+                        <label for="joinRoomCode">房间号</label>
+                        <input id="joinRoomCode" type="text" inputmode="numeric" pattern="[0-9]{10,}" maxlength="20" placeholder="例如：2026100601" required>
+                        <button class="primary" type="submit">加入游戏</button>
+                    </form>
+
+                    <form class="room-action-card referee-action" id="refereeForm">
+                        <div class="action-icon">◎</div>
+                        <h2>裁判观战</h2>
+                        <p>裁判可在游戏开始前或开始后加入，并查看所有玩家抽到的牌。</p>
+                        <label for="refereeRoomCode">房间号</label>
+                        <input id="refereeRoomCode" type="text" inputmode="numeric" pattern="[0-9]{10,}" maxlength="20" placeholder="输入正在进行的房间号" required>
+                        <button class="secondary action-secondary" type="submit">以裁判身份加入</button>
+                    </form>
+                </div>
+                <p class="status room-action-status" id="roomActionStatus" role="status" aria-live="polite"></p>
+
+                <section class="room-panel hidden" id="roomPanel" aria-label="房间信息">
+                    <div class="room-panel-top">
+                        <div>
+                            <span class="room-label">房间号</span>
+                            <div class="room-code-row"><strong id="roomCode"></strong><button class="copy-button" id="copyRoomCode" type="button">复制</button></div>
+                        </div>
+                        <span class="phase-pill" id="roomPhase"></span>
+                    </div>
+
+                    <div class="room-summary" id="roomSummary"></div>
+                    <div class="room-section-heading">
+                        <h2>房间成员</h2>
+                        <span id="roomMemberCount"></span>
+                    </div>
+                    <ul class="room-members" id="roomMembers"></ul>
+
+                    <div class="room-controls">
+                        <button class="primary room-control-button hidden" id="readyButton" type="button"></button>
+                        <button class="primary room-control-button hidden" id="startButton" type="button">所有人已准备，开始游戏</button>
+                        <button class="secondary room-control-button hidden" id="restartButton" type="button">重新开局</button>
+                        <button class="secondary room-control-button" id="leaveButton" type="button">离开房间</button>
+                        <p class="status room-control-status" id="roomStatus" role="status" aria-live="polite"></p>
+                    </div>
+
+                    <section class="draw-panel hidden" id="drawPanel">
+                        <div class="draw-intro">
+                            <div>
+                                <div class="eyebrow">YOUR TURN</div>
+                                <h2>抽取你的台球号码</h2>
+                                <p>点击牌面标记进球；同号码的牌会同步标记。再次点击可撤销。</p>
+                            </div>
+                            <div class="deck-mark" aria-hidden="true">A<br><span>♠</span></div>
+                        </div>
+                        <form class="draw-form" id="drawForm">
+                            <label for="drawCount">抽牌数量</label>
+                            <input id="drawCount" type="number" min="1" max="15" value="1" required>
+                            <button class="primary" id="drawButton" type="submit">抽牌</button>
+                        </form>
+                        <div class="my-cards hidden" id="myCards"></div>
+                        <button class="primary draw-more-button hidden" id="drawMoreButton" type="button">从剩余牌库再抽一张</button>
+                    </section>
+                </section>
+
+                <button class="back-link" id="backToGames" type="button">← 返回游戏选择</button>
+            </section>
+        </main>
+
+        <footer class="footer">
+            <span>© 2026 GameWithFriends</span>
+            <span>让每一次相聚，都有好玩的事</span>
+        </footer>
+    </div>
+
+    <script src="index.js" defer></script>
+</body>
+</html>
