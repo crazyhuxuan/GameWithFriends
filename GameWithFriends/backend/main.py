@@ -128,6 +128,7 @@ def initialize_database():
                 ready INTEGER NOT NULL DEFAULT 0 CHECK (ready IN (0, 1)),
                 cards TEXT NOT NULL DEFAULT '[]',
                 score INTEGER NOT NULL DEFAULT 0 CHECK (score BETWEEN -1000000000 AND 1000000000),
+                score_version INTEGER NOT NULL DEFAULT 0 CHECK (score_version >= 0),
                 active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
                 joined_at INTEGER NOT NULL,
                 PRIMARY KEY (room_code, user_id)
@@ -166,6 +167,14 @@ def initialize_database():
                 ALTER TABLE billiards_room_members
                 ADD COLUMN score INTEGER NOT NULL DEFAULT 0
                 CHECK (score BETWEEN -1000000000 AND 1000000000)
+                """
+            )
+        if "score_version" not in member_columns:
+            connection.execute(
+                """
+                ALTER TABLE billiards_room_members
+                ADD COLUMN score_version INTEGER NOT NULL DEFAULT 0
+                CHECK (score_version >= 0)
                 """
             )
         if "active" not in member_columns:
@@ -353,7 +362,8 @@ class AppHandler(BaseHTTPRequestHandler):
             return None
         members = connection.execute(
             """
-            SELECT m.user_id, u.username, m.role, m.ready, m.cards, m.active, m.score
+            SELECT m.user_id, u.username, m.role, m.ready, m.cards, m.active,
+                   m.score, m.score_version
             FROM billiards_room_members AS m JOIN users AS u ON u.id = m.user_id
             WHERE m.room_code = ?
               AND (m.active = 1 OR (m.role = 'player' AND m.cards != '[]'))
@@ -384,6 +394,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 "ready": bool(member["ready"]),
                 "active": bool(member["active"]),
                 "score": member["score"],
+                "score_version": member["score_version"],
             }
             if member["role"] == "player":
                 entry["unpotted_card_count"] = sum(
@@ -523,7 +534,7 @@ class AppHandler(BaseHTTPRequestHandler):
                         UPDATE billiards_room_members
                         SET active = 1,
                             ready = CASE
-                                WHEN ? = 'lobby' AND role = 'player' THEN 1
+                                WHEN ? = 'lobby' AND role = 'player' THEN 0
                                 ELSE ready
                             END
                         WHERE room_code = ? AND user_id = ?
@@ -816,6 +827,7 @@ class AppHandler(BaseHTTPRequestHandler):
         payload = self._read_json()
         username = payload.get("username")
         score = payload.get("score")
+        score_version = payload.get("score_version")
         if not isinstance(username, str) or not USERNAME_PATTERN.fullmatch(username):
             raise ValueError("玩家用户名无效。")
         if (
@@ -824,7 +836,14 @@ class AppHandler(BaseHTTPRequestHandler):
             or not -1_000_000_000 <= score <= 1_000_000_000
         ):
             raise ValueError("分数必须是 -1,000,000,000 到 1,000,000,000 之间的整数。")
+        if (
+            isinstance(score_version, bool)
+            or not isinstance(score_version, int)
+            or score_version < 0
+        ):
+            raise ValueError("分数版本无效，请刷新后重试。")
 
+        conflict_snapshot = None
         with connect_database() as connection:
             connection.execute("BEGIN IMMEDIATE")
             actor = connection.execute(
@@ -840,7 +859,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 return
             target = connection.execute(
                 """
-                SELECT m.user_id, m.role
+                SELECT m.user_id, m.role, m.score_version
                 FROM billiards_room_members AS m
                 JOIN users AS u ON u.id = m.user_id
                 WHERE m.room_code = ? AND u.username = ? COLLATE NOCASE
@@ -854,16 +873,31 @@ class AppHandler(BaseHTTPRequestHandler):
             if actor["role"] != "referee" and target["user_id"] != self.current_user["id"]:
                 self._send_json(403, {"error": "玩家只能修改自己的分数。"})
                 return
-            connection.execute(
-                """
-                UPDATE billiards_room_members SET score = ?
-                WHERE room_code = ? AND user_id = ?
-                """,
-                (score, actor["room_code"], target["user_id"]),
+            if target["score_version"] != score_version:
+                conflict_snapshot = self._room_snapshot(
+                    connection, actor["room_code"], self.current_user["id"]
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE billiards_room_members
+                    SET score = ?, score_version = score_version + 1
+                    WHERE room_code = ? AND user_id = ? AND score_version = ?
+                    """,
+                    (score, actor["room_code"], target["user_id"], score_version),
+                )
+                snapshot = self._room_snapshot(
+                    connection, actor["room_code"], self.current_user["id"]
+                )
+        if conflict_snapshot is not None:
+            self._send_json(
+                409,
+                {
+                    "error": "分数已被其他人修改，已显示最新分数，请确认后重新编辑。",
+                    "room": conflict_snapshot,
+                },
             )
-            snapshot = self._room_snapshot(
-                connection, actor["room_code"], self.current_user["id"]
-            )
+            return
         self._send_json(200, snapshot)
 
     def _billiards_leave(self):

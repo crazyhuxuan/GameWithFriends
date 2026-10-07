@@ -21,7 +21,8 @@ let roomRefreshInFlight = false;
 let currentRoom = null;
 let currentUsername = "";
 const scoreDrafts = new Map();
-const ROOM_POLL_INTERVAL_MS = 100;
+const scoreDraftVersions = new Map();
+const ROOM_POLL_INTERVAL_MS = 50;
 
 function showUserLogin() {
     document.getElementById("authHeading").classList.remove("hidden");
@@ -68,6 +69,7 @@ async function request(path, options = {}) {
     if (!response.ok) {
         const error = new Error(result.error || "请求失败，请稍后再试。");
         error.status = response.status;
+        error.result = result;
         throw error;
     }
     return result;
@@ -84,6 +86,7 @@ function showGames(username = currentUsername) {
     stopRoomPolling();
     currentRoom = null;
     scoreDrafts.clear();
+    scoreDraftVersions.clear();
     currentUsername = username;
     currentUser.textContent = username;
     authView.classList.add("hidden");
@@ -97,6 +100,7 @@ function showBilliardsMenu() {
     stopRoomPolling();
     currentRoom = null;
     scoreDrafts.clear();
+    scoreDraftVersions.clear();
     gamesView.classList.add("hidden");
     billiardsView.classList.remove("hidden");
     roomActions.classList.remove("hidden");
@@ -114,6 +118,7 @@ function appendCard(container, card, pottedNumbers, canToggle) {
     element.type = "button";
     element.className = `playing-card${/[♥♦]/u.test(card.label) ? " red-card" : ""}${isPocketed ? " pocketed" : ""}`;
     element.dataset.cardLabel = card.label;
+    element.dataset.cardNumber = String(card.number);
     element.disabled = !canToggle;
     element.setAttribute(
         "aria-label",
@@ -133,118 +138,212 @@ function appendCard(container, card, pottedNumbers, canToggle) {
         element.append(drawMarker);
     }
     element.append(number);
+    if (isPocketed) {
+        const pocketedMarker = document.createElement("span");
+        pocketedMarker.className = "pocketed-card-marker";
+        pocketedMarker.textContent = "已进球";
+        element.append(pocketedMarker);
+    }
     if (canToggle) {
         element.addEventListener("click", () => togglePocketed(card.number, element));
     }
     container.append(element);
 }
 
-function renderMembers(room) {
+function updateRenderedCardStates(container, pottedNumbers) {
+    const pottedSet = new Set(pottedNumbers);
+    for (const element of container.querySelectorAll(".playing-card")) {
+        const number = Number(element.dataset.cardNumber);
+        const label = element.dataset.cardLabel;
+        const isPocketed = pottedSet.has(number);
+        element.classList.toggle("pocketed", isPocketed);
+        let pocketedMarker = element.querySelector(".pocketed-card-marker");
+        if (isPocketed && !pocketedMarker) {
+            pocketedMarker = document.createElement("span");
+            pocketedMarker.className = "pocketed-card-marker";
+            pocketedMarker.textContent = "已进球";
+            element.append(pocketedMarker);
+        } else if (!isPocketed) {
+            pocketedMarker?.remove();
+        }
+        element.setAttribute(
+            "aria-label",
+            `${label}，台球 ${number} 号，${isPocketed ? "已进球，点击可撤销" : "未进球，点击标记进球"}`
+        );
+        element.title = isPocketed ? "已进球，点击撤销" : "未进球，点击标记进球";
+    }
+}
+
+function createMemberElement(room, member, pottedNumbers) {
+    const item = document.createElement("li");
+    item.className = "room-member";
+    item.dataset.username = member.username;
+    const info = document.createElement("div");
+    info.className = "member-info";
+    const name = document.createElement("span");
+    name.className = "member-name";
+    name.textContent = member.username === room.host_username
+        ? `${member.username}（房主）`
+        : member.username;
+    const memberHeading = document.createElement("div");
+    memberHeading.className = "member-heading";
+    memberHeading.append(name);
+    let scoreControls = null;
+    if (member.role === "player") {
+        if (room.status === "playing") {
+            const remainingCards = document.createElement("span");
+            remainingCards.className = "member-unpotted-count";
+            remainingCards.textContent = `未进球 ${member.unpotted_card_count} 张`;
+            memberHeading.append(remainingCards);
+        }
+        const scoreLabel = document.createElement("label");
+        scoreLabel.className = "member-score";
+        const scoreCaption = document.createElement("span");
+        scoreCaption.textContent = "分数（支持正负）";
+        const scoreInput = document.createElement("input");
+        scoreInput.className = "member-score-input";
+        scoreInput.type = "number";
+        scoreInput.step = "1";
+        scoreInput.min = "-1000000000";
+        scoreInput.max = "1000000000";
+        scoreInput.value = scoreDrafts.get(member.username) ?? String(member.score);
+        scoreInput.dataset.username = member.username;
+        scoreInput.dataset.confirmedScore = String(member.score);
+        scoreInput.dataset.scoreVersion = String(member.score_version);
+        scoreInput.dataset.editVersion = scoreDraftVersions.get(member.username)
+            ?? String(member.score_version);
+        const canEditScore = room.role === "referee"
+            || (member.active && member.username === currentUsername);
+        scoreInput.disabled = !canEditScore;
+        scoreInput.setAttribute("aria-label", `${member.username}的分数`);
+        scoreInput.addEventListener("focus", () => {
+            if (!scoreDrafts.has(member.username)) {
+                scoreInput.dataset.editVersion = scoreInput.dataset.scoreVersion;
+            }
+        });
+        scoreControls = document.createElement("div");
+        scoreControls.className = "member-score-controls";
+        const confirmButton = document.createElement("button");
+        confirmButton.className = "secondary member-score-confirm";
+        confirmButton.type = "button";
+        confirmButton.textContent = "确认分数";
+        confirmButton.disabled = !canEditScore
+            || scoreInput.value === scoreInput.dataset.confirmedScore;
+        scoreInput.addEventListener("input", () => {
+            if (scoreInput.value === scoreInput.dataset.confirmedScore) {
+                scoreDrafts.delete(member.username);
+                scoreDraftVersions.delete(member.username);
+            } else {
+                if (!scoreDrafts.has(member.username)) {
+                    scoreDraftVersions.set(member.username, scoreInput.dataset.editVersion);
+                }
+                scoreDrafts.set(member.username, scoreInput.value);
+            }
+            confirmButton.disabled = !canEditScore
+                || scoreInput.value === scoreInput.dataset.confirmedScore;
+        });
+        confirmButton.addEventListener("click", () => {
+            updateMemberScore(member.username, scoreInput, confirmButton);
+        });
+        scoreLabel.append(scoreCaption, scoreInput);
+        scoreControls.append(scoreLabel, confirmButton);
+    }
+    const badge = document.createElement("span");
+    updateMemberBadge(badge, room, member);
+    info.append(memberHeading);
+    if (scoreControls) info.append(scoreControls);
+    info.append(badge);
+    item.append(info);
+
+    if (room.role === "referee" && member.role === "player" && room.status === "playing") {
+        const cards = document.createElement("div");
+        cards.className = "member-card-groups";
+        if (member.cards.length) {
+            appendCardGroup(cards, "手牌", member.cards, pottedNumbers, true);
+        } else {
+            const waiting = document.createElement("span");
+            waiting.className = "member-badge";
+            waiting.textContent = "尚未抽牌";
+            cards.append(waiting);
+        }
+        item.append(cards);
+    }
+    return item;
+}
+
+function updateMemberBadge(badge, room, member) {
+    badge.className = "member-badge";
+    if (!member.active) {
+        badge.textContent = "已离开";
+        badge.classList.add("member-waiting");
+    } else if (member.role === "referee") {
+        badge.textContent = "裁判";
+    } else if (room.status === "playing") {
+        badge.textContent = "对局中";
+        badge.classList.add("member-ready");
+    } else {
+        badge.textContent = member.ready ? "已准备" : "等待准备";
+        badge.classList.add(member.ready ? "member-ready" : "member-waiting");
+    }
+}
+
+function renderMembers(room, forceCardRender = false) {
     const memberList = document.getElementById("roomMembers");
-    if (
-        document.activeElement?.classList.contains("member-score-input")
-        || memberList.querySelector(".member-score-controls:hover")
-    ) {
+    const focusedInput = document.activeElement?.classList.contains("member-score-input")
+        ? document.activeElement
+        : null;
+    const hoveredItem = !forceCardRender
+        ? memberList.querySelector(".member-score-controls:hover, .playing-card:hover")
+            ?.closest(".room-member")
+        : null;
+    const preservedItem = focusedInput?.closest(".room-member") ?? hoveredItem;
+    if (preservedItem && !forceCardRender) {
+        updateRenderedCardStates(memberList, room.potted_numbers);
+        const pottedNumbers = new Set(room.potted_numbers);
+        const membersByUsername = new Map(room.players.map(
+            (member) => [member.username, member]
+        ));
+        const renderedUsernames = new Set();
+        for (const item of Array.from(memberList.children)) {
+            const username = item.dataset.username;
+            const member = membersByUsername.get(username);
+            if (!member) {
+                item.remove();
+                continue;
+            }
+            renderedUsernames.add(username);
+            if (item === preservedItem) {
+                const badge = item.querySelector(".member-info > .member-badge");
+                if (badge) updateMemberBadge(badge, room, member);
+                const input = item.querySelector(".member-score-input");
+                if (input) {
+                    input.dataset.confirmedScore = String(member.score);
+                    input.dataset.scoreVersion = String(member.score_version);
+                    if (document.activeElement !== input && !scoreDrafts.has(username)) {
+                        input.value = String(member.score);
+                        input.dataset.editVersion = String(member.score_version);
+                    }
+                    const confirmButton = item.querySelector(".member-score-confirm");
+                    if (confirmButton) {
+                        confirmButton.disabled = input.disabled
+                            || input.value === input.dataset.confirmedScore;
+                    }
+                }
+                continue;
+            }
+            item.replaceWith(createMemberElement(room, member, pottedNumbers));
+        }
+        for (const member of room.players) {
+            if (!renderedUsernames.has(member.username)) {
+                memberList.append(createMemberElement(room, member, pottedNumbers));
+            }
+        }
         return;
     }
     const pottedNumbers = new Set(room.potted_numbers);
-    memberList.replaceChildren();
-    for (const member of room.players) {
-        const item = document.createElement("li");
-        item.className = "room-member";
-        const info = document.createElement("div");
-        info.className = "member-info";
-        const name = document.createElement("span");
-        name.className = "member-name";
-        name.textContent = member.username === room.host_username
-            ? `${member.username}（房主）`
-            : member.username;
-        const memberHeading = document.createElement("div");
-        memberHeading.className = "member-heading";
-        memberHeading.append(name);
-        if (member.role === "player") {
-            if (room.status === "playing") {
-                const remainingCards = document.createElement("span");
-                remainingCards.className = "member-unpotted-count";
-                remainingCards.textContent = `未进球 ${member.unpotted_card_count} 张`;
-                memberHeading.append(remainingCards);
-            }
-            const scoreLabel = document.createElement("label");
-            scoreLabel.className = "member-score";
-            const scoreCaption = document.createElement("span");
-            scoreCaption.textContent = "分数（支持正负）";
-            const scoreInput = document.createElement("input");
-            scoreInput.className = "member-score-input";
-            scoreInput.type = "number";
-            scoreInput.step = "1";
-            scoreInput.min = "-1000000000";
-            scoreInput.max = "1000000000";
-            scoreInput.value = scoreDrafts.get(member.username) ?? String(member.score);
-            const canEditScore = room.role === "referee"
-                || (member.active && member.username === currentUsername);
-            scoreInput.disabled = !canEditScore;
-            scoreInput.setAttribute("aria-label", `${member.username}的分数`);
-            const scoreControls = document.createElement("div");
-            scoreControls.className = "member-score-controls";
-            const confirmButton = document.createElement("button");
-            confirmButton.className = "secondary member-score-confirm";
-            confirmButton.type = "button";
-            confirmButton.textContent = "确认分数";
-            confirmButton.disabled = !canEditScore
-                || scoreInput.value === String(member.score);
-            scoreInput.addEventListener("input", () => {
-                if (scoreInput.value === String(member.score)) {
-                    scoreDrafts.delete(member.username);
-                } else {
-                    scoreDrafts.set(member.username, scoreInput.value);
-                }
-                confirmButton.disabled = !canEditScore
-                    || scoreInput.value === String(member.score);
-            });
-            confirmButton.addEventListener("click", () => {
-                updateMemberScore(member.username, scoreInput, confirmButton);
-            });
-            scoreLabel.append(scoreCaption, scoreInput);
-            scoreControls.append(scoreLabel, confirmButton);
-            memberHeading.append(scoreControls);
-        }
-        const badge = document.createElement("span");
-        badge.className = "member-badge";
-        if (!member.active) {
-            badge.textContent = "已离开";
-            badge.classList.add("member-waiting");
-        } else if (member.role === "referee") {
-            badge.textContent = "裁判";
-        } else if (room.status === "playing") {
-            badge.textContent = "对局中";
-            badge.classList.add("member-ready");
-        } else {
-            badge.textContent = member.ready ? "已准备" : "等待准备";
-            badge.classList.add(member.ready ? "member-ready" : "member-waiting");
-        }
-        info.append(memberHeading, badge);
-        item.append(info);
-
-        if (room.role === "referee" && member.role === "player" && room.status === "playing") {
-            const cards = document.createElement("div");
-            cards.className = "member-card-groups";
-            if (member.cards.length) {
-                appendCardGroup(cards, "未进球", member.cards.filter(
-                    (card) => !pottedNumbers.has(card.number)
-                ), pottedNumbers, true);
-                appendCardGroup(cards, "已进球", member.cards.filter(
-                    (card) => pottedNumbers.has(card.number)
-                ), pottedNumbers, true);
-            } else {
-                const waiting = document.createElement("span");
-                waiting.className = "member-badge";
-                waiting.textContent = "尚未抽牌";
-                cards.append(waiting);
-            }
-            item.append(cards);
-        }
-        memberList.append(item);
-    }
+    memberList.replaceChildren(
+        ...room.players.map((member) => createMemberElement(room, member, pottedNumbers))
+    );
 }
 
 async function updateMemberScore(username, input, confirmButton) {
@@ -259,13 +358,41 @@ async function updateMemberScore(username, input, confirmButton) {
     try {
         const room = await request("/api/billiards/score", {
             method: "POST",
-            body: JSON.stringify({ username, score })
+            body: JSON.stringify({
+                username,
+                score,
+                score_version: Number(input.dataset.editVersion)
+            })
         });
         scoreDrafts.delete(username);
+        scoreDraftVersions.delete(username);
         saved = true;
         renderRoom(room);
         input.value = String(score);
+        input.dataset.confirmedScore = String(score);
+        const updatedMember = room.players.find((member) => member.username === username);
+        if (updatedMember) {
+            input.dataset.scoreVersion = String(updatedMember.score_version);
+            input.dataset.editVersion = String(updatedMember.score_version);
+        }
     } catch (error) {
+        if (error.status === 409 && error.result?.room) {
+            scoreDrafts.delete(username);
+            scoreDraftVersions.delete(username);
+            renderRoom(error.result.room);
+            const latestMember = error.result.room.players.find(
+                (member) => member.username === username
+            );
+            const latestInput = Array.from(
+                document.querySelectorAll(".member-score-input")
+            ).find((scoreInput) => scoreInput.dataset.username === username);
+            if (latestMember && latestInput) {
+                latestInput.value = String(latestMember.score);
+                latestInput.dataset.confirmedScore = String(latestMember.score);
+                latestInput.dataset.scoreVersion = String(latestMember.score_version);
+                latestInput.dataset.editVersion = String(latestMember.score_version);
+            }
+        }
         roomStatus.textContent = error.message;
     } finally {
         if (input.isConnected) input.readOnly = false;
@@ -275,7 +402,7 @@ async function updateMemberScore(username, input, confirmButton) {
 
 function appendCardGroup(container, title, cards, pottedNumbers, canToggle) {
     const group = document.createElement("section");
-    group.className = `card-group${title === "已进球" ? " pocketed-group" : ""}`;
+    group.className = "card-group";
     const heading = document.createElement("h3");
     heading.className = "card-group-heading";
     heading.textContent = `${title}（${cards.length}）`;
@@ -288,9 +415,13 @@ function appendCardGroup(container, title, cards, pottedNumbers, canToggle) {
     container.append(group);
 }
 
-function renderOwnCards(cards, pottedNumbers) {
+function renderOwnCards(cards, pottedNumbers, forceCardRender = false) {
     const drawForm = document.getElementById("drawForm");
     const myCards = document.getElementById("myCards");
+    if (!forceCardRender && myCards.querySelector(".playing-card:hover")) {
+        updateRenderedCardStates(myCards, pottedNumbers);
+        return;
+    }
     if (!cards.length) {
         drawForm.classList.remove("hidden");
         myCards.classList.add("hidden");
@@ -301,16 +432,11 @@ function renderOwnCards(cards, pottedNumbers) {
     myCards.classList.remove("hidden");
     myCards.replaceChildren();
     const pottedSet = new Set(pottedNumbers);
-    appendCardGroup(myCards, "未进球", cards.filter(
-        (card) => !pottedSet.has(card.number)
-    ), pottedSet, true);
-    appendCardGroup(myCards, "已进球", cards.filter(
-        (card) => pottedSet.has(card.number)
-    ), pottedSet, true);
+    appendCardGroup(myCards, "手牌", cards, pottedSet, true);
     document.getElementById("drawMoreButton").classList.remove("hidden");
 }
 
-function renderRoom(room) {
+function renderRoom(room, forceCardRender = false) {
     currentRoom = room;
     roomActions.classList.add("hidden");
     roomPanel.classList.remove("hidden");
@@ -338,7 +464,7 @@ function renderRoom(room) {
             : room.status === "playing"
                 ? "选择抽牌数量，抽取的扑克牌不会与其他玩家重复。"
                 : "将房间号分享给好友，所有玩家准备就绪后由房主开始游戏。";
-    renderMembers(room);
+    renderMembers(room, forceCardRender);
 
     const ownPlayer = room.players.find(
         (member) => member.username === currentUsername && member.role === "player"
@@ -365,7 +491,7 @@ function renderRoom(room) {
     const mayDraw = room.status === "playing" && room.role === "player";
     drawPanel.classList.toggle("hidden", !mayDraw);
     if (mayDraw) {
-        renderOwnCards(ownPlayer?.cards ?? [], room.potted_numbers);
+        renderOwnCards(ownPlayer?.cards ?? [], room.potted_numbers, forceCardRender);
     }
     document.getElementById("drawCount").max = String(Math.min(15, Math.max(1, 54)));
     roomStatus.textContent = room.status === "lobby"
@@ -413,7 +539,7 @@ async function togglePocketed(number, cardButton) {
         renderRoom(await request("/api/billiards/toggle-pocketed", {
             method: "POST",
             body: JSON.stringify({ number })
-        }));
+        }), true);
     } catch (error) {
         roomStatus.textContent = error.message;
     } finally {
@@ -544,6 +670,7 @@ document.getElementById("logoutButton").addEventListener("click", async () => {
         stopRoomPolling();
         currentRoom = null;
         scoreDrafts.clear();
+        scoreDraftVersions.clear();
         gamesView.classList.add("hidden");
         billiardsView.classList.add("hidden");
         userBar.classList.add("hidden");

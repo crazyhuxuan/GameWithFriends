@@ -161,7 +161,9 @@
             transition: transform .18s, background .18s;
         }
         .primary { width: 100%; margin-top: 4px; color: #172013; background: var(--green); }
-        .primary:hover { transform: translateY(-1px); background: #d8fa91; }
+        @media (hover: hover) and (pointer: fine) {
+            .primary:hover { transform: translateY(-1px); background: #d8fa91; }
+        }
         button:disabled { cursor: wait; opacity: .7; }
         .status { min-height: 20px; margin: 13px 0 0; color: #ffb3a8; font-size: 12px; line-height: 1.6; }
         .status.success { color: var(--green); }
@@ -182,7 +184,9 @@
             background: rgba(255,255,255,.04);
             font-size: 12px;
         }
-        .secondary:hover { background: rgba(255,255,255,.09); }
+        @media (hover: hover) and (pointer: fine) {
+            .secondary:hover { background: rgba(255,255,255,.09); }
+        }
         .game-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
         .game-card {
             position: relative;
@@ -198,7 +202,9 @@
             text-align: left;
             transition: transform .2s, border-color .2s;
         }
-        .game-card:hover { transform: translateY(-4px); border-color: rgba(200,241,105,.55); }
+        @media (hover: hover) and (pointer: fine) {
+            .game-card:hover { transform: translateY(-4px); border-color: rgba(200,241,105,.55); }
+        }
         .game-card.mahjong { background: linear-gradient(140deg, rgba(73, 57, 42, .88), rgba(34, 38, 31, .96)); }
         .game-icon { font-size: 37px; }
         .game-card h2 { margin: 18px 0 8px; font-size: 25px; letter-spacing: -.04em; }
@@ -224,6 +230,41 @@
             .user-bar { gap: 8px; font-size: 11px; }
             .secondary { padding: 0 9px; }
             .footer { gap: 12px; font-size: 10px; }
+        }
+        @media (max-width: 560px) {
+            .page-shell { min-height: 100svh; padding: 12px 16px; }
+            main { padding: 12px 0; }
+            .auth-layout { display: block; width: 100%; max-width: 430px; }
+            .auth-layout .intro { display: none; }
+            .auth-card { padding: 20px; border-radius: 17px; }
+            .card-heading p { margin: 7px 0 16px; }
+            .tabs { margin-bottom: 16px; }
+            .field { margin-bottom: 12px; }
+            .field label { margin-bottom: 6px; }
+            .field input { height: 43px; }
+            .status { margin-top: 8px; }
+            .back-link { margin-top: 10px; }
+        }
+        @media (pointer: coarse) {
+            html { -webkit-text-size-adjust: 100%; }
+            body { min-height: 100vh; min-height: 100dvh; }
+            .page-shell {
+                min-height: 100vh;
+                min-height: 100dvh;
+                padding-top: calc(12px + env(safe-area-inset-top, 0px));
+                padding-right: max(16px, env(safe-area-inset-right, 0px));
+                padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+                padding-left: max(16px, env(safe-area-inset-left, 0px));
+            }
+            main { padding-top: 16px; padding-bottom: 16px; }
+            button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+            .primary, .secondary, .room-control-button, .copy-button, .back-link {
+                min-height: 44px;
+            }
+            .field input, .room-action-card input, .draw-form input, .member-score-input {
+                font-size: 16px;
+            }
+            .game-card { transition: none; }
         }
 
         .room-page-heading { margin-bottom: 25px; }
@@ -278,7 +319,7 @@
         .room-section-heading h2 { margin: 0; font-size: 15px; }
         .room-section-heading span { color: var(--muted); font-size: 11px; }
         .room-members { display: grid; gap: 8px; padding: 0; margin: 0; list-style: none; }
-        .room-member { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid rgba(230,242,220,.08); border-radius: 10px; background: rgba(0,0,0,.15); }
+        .room-member { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 12px; border: 1px solid rgba(230,242,220,.08); border-radius: 10px; background: rgba(0,0,0,.15); }
         .member-info { display: flex; min-width: 0; flex-direction: column; gap: 7px; }
         .member-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
         .member-name { overflow-wrap: anywhere; color: #e5ebe5; font-size: 12px; font-weight: 650; }
@@ -304,7 +345,6 @@
             font-weight: 750;
         }
         .card-group-heading::before { width: 7px; height: 7px; border-radius: 50%; background: var(--green); content: ""; }
-        .pocketed-group .card-group-heading::before { background: #f0aa69; }
         .member-cards { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 9px; }
         .playing-card {
             position: relative;
@@ -347,10 +387,10 @@
             font-weight: 900;
             line-height: 1;
         }
-        .playing-card:hover:not(:disabled) { z-index: 1; box-shadow: 0 0 0 3px rgba(200,241,105,.42), 0 10px 22px rgba(0,0,0,.32); }
         .playing-card:focus-visible { outline: 3px solid var(--green); outline-offset: 3px; }
         .playing-card.red-card { color: #b53e3e; }
         .playing-card small { display: block; padding: 4px 6px; border-radius: 999px; color: #364432; background: rgba(200,241,105,.57); font-size: 10px; font-weight: 800; white-space: nowrap; }
+        .pocketed-card-marker { display: inline-flex; padding: 3px 5px; border-radius: 999px; color: #492b1c; background: rgba(255,255,255,.56); font-size: 9px; font-weight: 850; line-height: 1; white-space: nowrap; }
         .playing-card.pocketed {
             border-color: #f0aa69;
             background: linear-gradient(145deg, #f4c995, #d98f5f);
@@ -367,6 +407,7 @@
         .member-card-groups .playing-card::before { top: 4px; left: 5px; font-size: 8px; }
         .member-card-groups .drawn-card-marker { top: 4px; right: 4px; width: 16px; height: 16px; font-size: 9px; }
         .member-card-groups .playing-card small { padding: 3px 4px; font-size: 8px; }
+        .member-card-groups .pocketed-card-marker { padding: 2px 4px; font-size: 7px; }
         .room-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 17px; }
         .room-control-button { width: auto; min-width: 190px; padding: 0 18px; }
         .room-control-status { flex: 1; min-width: 160px; margin: 0; }
@@ -384,7 +425,9 @@
         .my-cards { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 18px; }
         .my-cards-label { width: 100%; color: var(--muted); font-size: 11px; }
         .back-link { display: block; padding: 8px 0; margin-top: 18px; border: 0; color: #aabbb2; background: transparent; font-size: 12px; }
-        .back-link:hover { color: var(--green); }
+        @media (hover: hover) and (pointer: fine) {
+            .back-link:hover { color: var(--green); }
+        }
 
         @media (max-width: 850px) {
             .room-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -394,7 +437,7 @@
             .room-actions { grid-template-columns: 1fr; }
             .referee-action { grid-column: auto; }
             .room-action-card p { min-height: 0; }
-            .room-member { flex-direction: column; }
+            .room-member { display: flex; flex-direction: column; }
             .member-cards { justify-content: flex-start; }
             .room-control-button { width: 100%; }
             .room-control-status { flex-basis: 100%; }
