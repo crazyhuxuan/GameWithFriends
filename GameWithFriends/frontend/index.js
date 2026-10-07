@@ -17,8 +17,11 @@ const adminConsole = document.getElementById("adminConsole");
 const roomActions = document.getElementById("roomActions");
 const roomPanel = document.getElementById("roomPanel");
 let roomPollTimer = null;
+let roomRefreshInFlight = false;
 let currentRoom = null;
 let currentUsername = "";
+const scoreDrafts = new Map();
+const ROOM_POLL_INTERVAL_MS = 100;
 
 function showUserLogin() {
     document.getElementById("authHeading").classList.remove("hidden");
@@ -80,6 +83,7 @@ function stopRoomPolling() {
 function showGames(username = currentUsername) {
     stopRoomPolling();
     currentRoom = null;
+    scoreDrafts.clear();
     currentUsername = username;
     currentUser.textContent = username;
     authView.classList.add("hidden");
@@ -92,6 +96,7 @@ function showGames(username = currentUsername) {
 function showBilliardsMenu() {
     stopRoomPolling();
     currentRoom = null;
+    scoreDrafts.clear();
     gamesView.classList.add("hidden");
     billiardsView.classList.remove("hidden");
     roomActions.classList.remove("hidden");
@@ -136,7 +141,10 @@ function appendCard(container, card, pottedNumbers, canToggle) {
 
 function renderMembers(room) {
     const memberList = document.getElementById("roomMembers");
-    if (document.activeElement?.classList.contains("member-score-input")) {
+    if (
+        document.activeElement?.classList.contains("member-score-input")
+        || memberList.querySelector(".member-score-controls:hover")
+    ) {
         return;
     }
     const pottedNumbers = new Set(room.potted_numbers);
@@ -171,13 +179,34 @@ function renderMembers(room) {
             scoreInput.step = "1";
             scoreInput.min = "-1000000000";
             scoreInput.max = "1000000000";
-            scoreInput.value = String(member.score);
-            scoreInput.disabled = room.role !== "referee"
-                && (!member.active || member.username !== currentUsername);
+            scoreInput.value = scoreDrafts.get(member.username) ?? String(member.score);
+            const canEditScore = room.role === "referee"
+                || (member.active && member.username === currentUsername);
+            scoreInput.disabled = !canEditScore;
             scoreInput.setAttribute("aria-label", `${member.username}的分数`);
-            scoreInput.addEventListener("change", () => updateMemberScore(member.username, scoreInput));
+            const scoreControls = document.createElement("div");
+            scoreControls.className = "member-score-controls";
+            const confirmButton = document.createElement("button");
+            confirmButton.className = "secondary member-score-confirm";
+            confirmButton.type = "button";
+            confirmButton.textContent = "确认分数";
+            confirmButton.disabled = !canEditScore
+                || scoreInput.value === String(member.score);
+            scoreInput.addEventListener("input", () => {
+                if (scoreInput.value === String(member.score)) {
+                    scoreDrafts.delete(member.username);
+                } else {
+                    scoreDrafts.set(member.username, scoreInput.value);
+                }
+                confirmButton.disabled = !canEditScore
+                    || scoreInput.value === String(member.score);
+            });
+            confirmButton.addEventListener("click", () => {
+                updateMemberScore(member.username, scoreInput, confirmButton);
+            });
             scoreLabel.append(scoreCaption, scoreInput);
-            memberHeading.append(scoreLabel);
+            scoreControls.append(scoreLabel, confirmButton);
+            memberHeading.append(scoreControls);
         }
         const badge = document.createElement("span");
         badge.className = "member-badge";
@@ -218,22 +247,29 @@ function renderMembers(room) {
     }
 }
 
-async function updateMemberScore(username, input) {
+async function updateMemberScore(username, input, confirmButton) {
     const score = input.valueAsNumber;
     if (!Number.isInteger(score) || score < -1_000_000_000 || score > 1_000_000_000) {
         roomStatus.textContent = "分数必须是 -1,000,000,000 到 1,000,000,000 之间的整数。";
         return;
     }
     input.readOnly = true;
+    confirmButton.disabled = true;
+    let saved = false;
     try {
-        renderRoom(await request("/api/billiards/score", {
+        const room = await request("/api/billiards/score", {
             method: "POST",
             body: JSON.stringify({ username, score })
-        }));
+        });
+        scoreDrafts.delete(username);
+        saved = true;
+        renderRoom(room);
+        input.value = String(score);
     } catch (error) {
         roomStatus.textContent = error.message;
     } finally {
-        input.readOnly = false;
+        if (input.isConnected) input.readOnly = false;
+        if (confirmButton.isConnected) confirmButton.disabled = saved;
     }
 }
 
@@ -322,7 +358,7 @@ function renderRoom(room) {
     startButton.textContent = allReady ? "所有人已准备，开始游戏" : "等待所有玩家准备";
 
     document.getElementById("restartButton").classList.toggle(
-        "hidden", room.status !== "playing"
+        "hidden", room.status !== "playing" || !room.is_host
     );
 
     const drawPanel = document.getElementById("drawPanel");
@@ -346,12 +382,13 @@ function renderRoom(room) {
     roomStatus.classList.remove("success");
     if (room.status === "playing") roomStatus.classList.add("success");
     if (roomPollTimer === null) {
-        roomPollTimer = window.setInterval(refreshRoom, 2000);
+        roomPollTimer = window.setInterval(refreshRoom, ROOM_POLL_INTERVAL_MS);
     }
 }
 
 async function refreshRoom() {
-    if (document.hidden || !currentRoom) return;
+    if (document.hidden || !currentRoom || roomRefreshInFlight) return;
+    roomRefreshInFlight = true;
     try {
         const result = await request("/api/rooms/current");
         if (!result.room) {
@@ -364,6 +401,8 @@ async function refreshRoom() {
     } catch (error) {
         roomStatus.textContent = error.message;
         roomStatus.classList.remove("success");
+    } finally {
+        roomRefreshInFlight = false;
     }
 }
 
@@ -504,6 +543,7 @@ document.getElementById("logoutButton").addEventListener("click", async () => {
         await request("/api/logout", { method: "POST", body: "{}" });
         stopRoomPolling();
         currentRoom = null;
+        scoreDrafts.clear();
         gamesView.classList.add("hidden");
         billiardsView.classList.add("hidden");
         userBar.classList.add("hidden");

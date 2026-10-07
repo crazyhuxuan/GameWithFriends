@@ -780,7 +780,7 @@ class AppHandler(BaseHTTPRequestHandler):
             connection.execute("BEGIN IMMEDIATE")
             membership = connection.execute(
                 """
-                SELECT m.room_code, r.status
+                SELECT m.room_code, r.status, r.host_user_id
                 FROM billiards_room_members AS m
                 JOIN billiards_rooms AS r ON r.room_code = m.room_code
                 WHERE m.user_id = ? AND m.active = 1
@@ -789,6 +789,9 @@ class AppHandler(BaseHTTPRequestHandler):
             ).fetchone()
             if membership is None:
                 self._send_json(403, {"error": "只有房间成员可以重新开局。"})
+                return
+            if membership["host_user_id"] != self.current_user["id"]:
+                self._send_json(403, {"error": "只有房主可以重新开局。"})
                 return
             if membership["status"] != "playing":
                 self._send_json(409, {"error": "游戏尚未开始，暂时不能重新开局。"})
