@@ -203,9 +203,10 @@
             transition: transform .2s, border-color .2s;
         }
         @media (hover: hover) and (pointer: fine) {
-            .game-card:hover { transform: translateY(-4px); border-color: rgba(200,241,105,.55); }
+            .game-card:not(:disabled):hover { transform: translateY(-4px); border-color: rgba(200,241,105,.55); }
         }
-        .game-card.mahjong { background: linear-gradient(140deg, rgba(73, 57, 42, .88), rgba(34, 38, 31, .96)); }
+        .upcoming-game { cursor: default; opacity: .76; }
+        .upcoming-game .game-meta strong { color: #c2cec5; }
         .game-icon { font-size: 37px; }
         .game-card h2 { margin: 18px 0 8px; font-size: 25px; letter-spacing: -.04em; }
         .game-card p { max-width: 290px; margin: 0; color: #b4c1b8; font-size: 13px; line-height: 1.7; }

@@ -22,7 +22,7 @@ let currentRoom = null;
 let currentUsername = "";
 const scoreDrafts = new Map();
 const scoreDraftVersions = new Map();
-const ROOM_POLL_INTERVAL_MS = 50;
+const ROOM_POLL_INTERVAL_MS = 100;
 
 function showUserLogin() {
     document.getElementById("authHeading").classList.remove("hidden");
@@ -119,6 +119,7 @@ function appendCard(container, card, pottedNumbers, canToggle) {
     element.className = `playing-card${/[♥♦]/u.test(card.label) ? " red-card" : ""}${isPocketed ? " pocketed" : ""}`;
     element.dataset.cardLabel = card.label;
     element.dataset.cardNumber = String(card.number);
+    element.dataset.pocketed = String(isPocketed);
     element.disabled = !canToggle;
     element.setAttribute(
         "aria-label",
@@ -145,7 +146,9 @@ function appendCard(container, card, pottedNumbers, canToggle) {
         element.append(pocketedMarker);
     }
     if (canToggle) {
-        element.addEventListener("click", () => togglePocketed(card.number, element));
+        element.addEventListener("click", () => {
+            setPocketed(card.number, element.dataset.pocketed !== "true", element);
+        });
     }
     container.append(element);
 }
@@ -156,6 +159,7 @@ function updateRenderedCardStates(container, pottedNumbers) {
         const number = Number(element.dataset.cardNumber);
         const label = element.dataset.cardLabel;
         const isPocketed = pottedSet.has(number);
+        element.dataset.pocketed = String(isPocketed);
         element.classList.toggle("pocketed", isPocketed);
         let pocketedMarker = element.querySelector(".pocketed-card-marker");
         if (isPocketed && !pocketedMarker) {
@@ -532,13 +536,13 @@ async function refreshRoom() {
     }
 }
 
-async function togglePocketed(number, cardButton) {
+async function setPocketed(number, pocketed, cardButton) {
     cardButton.disabled = true;
     roomStatus.textContent = "正在同步进球状态…";
     try {
-        renderRoom(await request("/api/billiards/toggle-pocketed", {
+        renderRoom(await request("/api/billiards/set-pocketed", {
             method: "POST",
-            body: JSON.stringify({ number })
+            body: JSON.stringify({ number, pocketed })
         }), true);
     } catch (error) {
         roomStatus.textContent = error.message;
@@ -685,10 +689,6 @@ document.getElementById("logoutButton").addEventListener("click", async () => {
 });
 
 document.getElementById("billiardsCard").addEventListener("click", showBilliardsMenu);
-document.getElementById("mahjongCard").addEventListener("click", () => {
-    gameStatus.textContent = "麻将房间功能即将开放。";
-    gameStatus.classList.add("success");
-});
 document.getElementById("backToGames").addEventListener("click", () => showGames());
 
 document.getElementById("createRoomForm").addEventListener("submit", (event) => {

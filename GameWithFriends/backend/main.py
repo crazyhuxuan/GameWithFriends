@@ -1,9 +1,11 @@
 import hashlib
+import ipaddress
 import json
 import re
 import secrets
 import sqlite3
 import socket
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime
@@ -22,6 +24,54 @@ USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,20}$")
 PBKDF2_ITERATIONS = 600_000
 ADMIN_USERNAME = "GameAdmin"
 ADMIN_PASSWORD = "12345678990"
+LOGIN_FAILURE_LIMIT = 3
+LOGIN_LOCKOUT_SECONDS = 60
+_login_failure_counts = {}
+_login_blocked_until = {}
+_login_lock = threading.Lock()
+
+
+def login_lockout_remaining(client_ip):
+    now = time.monotonic()
+    with _login_lock:
+        blocked_until = _login_blocked_until.get(client_ip)
+        if blocked_until is None:
+            return 0
+        remaining = blocked_until - now
+        if remaining <= 0:
+            _login_blocked_until.pop(client_ip, None)
+            _login_failure_counts.pop(client_ip, None)
+            return 0
+        return remaining
+
+
+def record_login_failure(client_ip):
+    now = time.monotonic()
+    with _login_lock:
+        blocked_until = _login_blocked_until.get(client_ip)
+        if blocked_until is not None and blocked_until > now:
+            return blocked_until - now
+        if blocked_until is not None:
+            _login_blocked_until.pop(client_ip, None)
+            _login_failure_counts.pop(client_ip, None)
+        failures = _login_failure_counts.get(client_ip, 0) + 1
+        if failures >= LOGIN_FAILURE_LIMIT:
+            _login_failure_counts.pop(client_ip, None)
+            _login_blocked_until[client_ip] = now + LOGIN_LOCKOUT_SECONDS
+            return LOGIN_LOCKOUT_SECONDS
+        _login_failure_counts[client_ip] = failures
+        return 0
+
+
+def clear_login_failures(client_ip):
+    now = time.monotonic()
+    with _login_lock:
+        blocked_until = _login_blocked_until.get(client_ip)
+        if blocked_until is not None and blocked_until > now:
+            return blocked_until - now
+        _login_blocked_until.pop(client_ip, None)
+        _login_failure_counts.pop(client_ip, None)
+        return 0
 
 
 @contextmanager
@@ -229,6 +279,25 @@ class AppHandler(BaseHTTPRequestHandler):
         morsel = cookie.get("gfw_session")
         return morsel.value if morsel else None
 
+    def _login_client_ip(self):
+        peer_ip = ipaddress.ip_address(self.client_address[0])
+        if peer_ip.is_loopback:
+            forwarded_ip = self.headers.get("CF-Connecting-IP", "").strip()
+            if forwarded_ip:
+                try:
+                    return ipaddress.ip_address(forwarded_ip).compressed
+                except ValueError:
+                    pass
+        return peer_ip.compressed
+
+    def _send_login_locked_response(self, remaining):
+        retry_after = max(1, int(remaining + 0.999))
+        self._send_json(
+            429,
+            {"error": f"登录失败次数过多，请 {retry_after} 秒后重试。"},
+            [("Retry-After", str(retry_after))],
+        )
+
     def _authenticated_user(self):
         token = self._session_token()
         if not token:
@@ -325,7 +394,7 @@ class AppHandler(BaseHTTPRequestHandler):
             "/api/billiards/start": self._billiards_start,
             "/api/billiards/draw": self._billiards_draw,
             "/api/billiards/draw-one-more": self._billiards_draw_one_more,
-            "/api/billiards/toggle-pocketed": self._billiards_toggle_pocketed,
+            "/api/billiards/set-pocketed": self._billiards_set_pocketed,
             "/api/billiards/restart": self._billiards_restart,
             "/api/billiards/score": self._billiards_score,
             "/api/billiards/leave": self._billiards_leave,
@@ -726,11 +795,14 @@ class AppHandler(BaseHTTPRequestHandler):
             )
         self._send_json(200, snapshot)
 
-    def _billiards_toggle_pocketed(self):
+    def _billiards_set_pocketed(self):
         payload = self._read_json()
         number = payload.get("number")
+        pocketed = payload.get("pocketed")
         if isinstance(number, bool) or not isinstance(number, int) or not 1 <= number <= 15:
             raise ValueError("台球号码必须是 1–15 之间的整数。")
+        if not isinstance(pocketed, bool):
+            raise ValueError("进球状态无效。")
         with connect_database() as connection:
             connection.execute("BEGIN IMMEDIATE")
             membership = connection.execute(
@@ -754,14 +826,16 @@ class AppHandler(BaseHTTPRequestHandler):
                     self._send_json(403, {"error": "玩家只能更新自己抽到的台球号码。"})
                     return
 
-            existing = connection.execute(
-                """
-                SELECT 1 FROM billiards_potted_numbers
-                WHERE room_code = ? AND number = ?
-                """,
-                (membership["room_code"], number),
-            ).fetchone()
-            if existing:
+            if pocketed:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO billiards_potted_numbers
+                        (room_code, number, potted_at, potted_by)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (membership["room_code"], number, int(time.time()), self.current_user["id"]),
+                )
+            else:
                 connection.execute(
                     """
                     DELETE FROM billiards_potted_numbers
@@ -769,17 +843,6 @@ class AppHandler(BaseHTTPRequestHandler):
                     """,
                     (membership["room_code"], number),
                 )
-                pocketed = False
-            else:
-                connection.execute(
-                    """
-                    INSERT INTO billiards_potted_numbers
-                        (room_code, number, potted_at, potted_by)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (membership["room_code"], number, int(time.time()), self.current_user["id"]),
-                )
-                pocketed = True
             snapshot = self._room_snapshot(
                 connection, membership["room_code"], self.current_user["id"]
             )
@@ -992,6 +1055,11 @@ class AppHandler(BaseHTTPRequestHandler):
         self._send_json(201, {"username": username, "message": "账号创建成功。"})
 
     def _login(self):
+        client_ip = self._login_client_ip()
+        remaining = login_lockout_remaining(client_ip)
+        if remaining:
+            self._send_login_locked_response(remaining)
+            return
         username, password = self._credentials()
         with connect_database() as connection:
             user = connection.execute(
@@ -1004,15 +1072,32 @@ class AppHandler(BaseHTTPRequestHandler):
         if user is None or not secrets.compare_digest(
             hash_password(password, user["password_salt"]), user["password_hash"]
         ):
-            self._send_json(401, {"error": "用户名或密码不正确。"})
+            remaining = record_login_failure(client_ip)
+            if remaining:
+                self._send_login_locked_response(remaining)
+            else:
+                self._send_json(401, {"error": "用户名或密码不正确。"})
             return
         if user["role"] == "admin":
-            self._send_json(403, {"error": "管理员请使用管理员登录入口。"})
+            remaining = record_login_failure(client_ip)
+            if remaining:
+                self._send_login_locked_response(remaining)
+            else:
+                self._send_json(403, {"error": "管理员请使用管理员登录入口。"})
+            return
+        remaining = clear_login_failures(client_ip)
+        if remaining:
+            self._send_login_locked_response(remaining)
             return
         cookie = self._create_session(user["id"])
         self._send_json(200, {"username": user["username"], "role": user["role"]}, [cookie])
 
     def _admin_login(self):
+        client_ip = self._login_client_ip()
+        remaining = login_lockout_remaining(client_ip)
+        if remaining:
+            self._send_login_locked_response(remaining)
+            return
         username, password = self._credentials()
         with connect_database() as connection:
             user = connection.execute(
@@ -1029,7 +1114,15 @@ class AppHandler(BaseHTTPRequestHandler):
                 hash_password(password, user["password_salt"]), user["password_hash"]
             )
         ):
-            self._send_json(401, {"error": "管理员账号或密码不正确。"})
+            remaining = record_login_failure(client_ip)
+            if remaining:
+                self._send_login_locked_response(remaining)
+            else:
+                self._send_json(401, {"error": "管理员账号或密码不正确。"})
+            return
+        remaining = clear_login_failures(client_ip)
+        if remaining:
+            self._send_login_locked_response(remaining)
             return
         cookie = self._create_session(user["id"])
         self._send_json(
