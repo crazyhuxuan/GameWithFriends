@@ -14,6 +14,13 @@
             <span class="top-note">好游戏，和好朋友一起玩</span>
             <div class="user-bar hidden" id="userBar">
                 <span>你好，<strong id="currentUser"></strong></span>
+                <button class="secondary" id="nicknameButton" type="button">修改昵称</button>
+                <form class="nickname-form hidden" id="nicknameForm">
+                    <input class="nickname-input" id="nicknameInput" minlength="1" maxlength="20" placeholder="输入新昵称" aria-label="新昵称" required>
+                    <button class="secondary" type="submit">保存</button>
+                    <button class="secondary" id="cancelNickname" type="button">取消</button>
+                    <span class="nickname-status" id="nicknameStatus" role="status" aria-live="polite"></span>
+                </form>
                 <button class="secondary" id="logoutButton" type="button">退出登录</button>
             </div>
         </header>
@@ -85,6 +92,14 @@
                             <button class="primary" type="submit">创建账号</button>
                             <p class="status" id="createAccountStatus" role="status" aria-live="polite"></p>
                         </form>
+                        <section class="admin-account-section" aria-label="已有用户">
+                            <div class="admin-account-heading">
+                                <h3>已有用户</h3>
+                                <button class="secondary" id="refreshAccounts" type="button">刷新</button>
+                            </div>
+                            <p class="status" id="accountListStatus" role="status" aria-live="polite"></p>
+                            <ul class="admin-account-list" id="adminAccountList"></ul>
+                        </section>
                     </section>
                 </div>
             </section>
@@ -120,19 +135,14 @@
                 <div class="games-heading room-page-heading">
                     <div class="eyebrow">BILLIARDS WITH FRIENDS</div>
                     <h1 id="billiardsHeading">来一场<span>台球对决</span></h1>
-                    <p id="billiardsDescription">创建房间邀请好友，或输入房间号加入一场游戏。</p>
+                    <p id="billiardsDescription">创建不限人数的房间，分享房间号或从房间列表加入。</p>
                 </div>
 
                 <div class="room-actions" id="roomActions">
                     <form class="room-action-card" id="createRoomForm">
                         <div class="action-icon">＋</div>
                         <h2>创建新房间</h2>
-                        <p>成为房主，设置本局玩家人数。</p>
-                        <label for="roomCapacity">游戏人数</label>
-                        <div class="inline-field">
-                            <input id="roomCapacity" type="number" min="2" max="54" value="4" required>
-                            <span>人</span>
-                        </div>
+                        <p>成为房主，好友可通过房间号或房间列表加入。</p>
                         <button class="primary" type="submit">创建房间</button>
                     </form>
 
@@ -145,16 +155,19 @@
                         <button class="primary" type="submit">加入游戏</button>
                     </form>
 
-                    <form class="room-action-card referee-action" id="refereeForm">
-                        <div class="action-icon">◎</div>
-                        <h2>裁判观战</h2>
-                        <p>裁判可在游戏开始前或开始后加入，并查看所有玩家抽到的牌。</p>
-                        <label for="refereeRoomCode">房间号</label>
-                        <input id="refereeRoomCode" type="text" inputmode="numeric" pattern="[0-9]{10,}" maxlength="20" placeholder="输入正在进行的房间号" required>
-                        <button class="secondary action-secondary" type="submit">以裁判身份加入</button>
-                    </form>
                 </div>
                 <p class="status room-action-status" id="roomActionStatus" role="status" aria-live="polite"></p>
+                <section class="room-directory" id="roomDirectory" aria-label="未关闭房间">
+                    <div class="room-directory-heading">
+                        <div>
+                            <h2>未关闭的房间</h2>
+                            <p>等待中的房间可以加入；进入后、游戏开始前可随时切换身份。</p>
+                        </div>
+                        <button class="secondary" id="refreshRoomDirectory" type="button">刷新</button>
+                    </div>
+                    <p class="status room-directory-status" id="roomDirectoryStatus" role="status" aria-live="polite"></p>
+                    <ul class="room-directory-list" id="roomDirectoryList"></ul>
+                </section>
 
                 <section class="room-panel hidden" id="roomPanel" aria-label="房间信息">
                     <div class="room-panel-top">
@@ -176,6 +189,7 @@
                         <button class="primary room-control-button hidden" id="readyButton" type="button"></button>
                         <button class="primary room-control-button hidden" id="startButton" type="button">所有人已准备，开始游戏</button>
                         <button class="secondary room-control-button hidden" id="restartButton" type="button">重新开局</button>
+                        <button class="secondary room-control-button hidden" id="switchRoleButton" type="button"></button>
                         <button class="secondary room-control-button" id="leaveButton" type="button">离开房间</button>
                         <p class="status room-control-status" id="roomStatus" role="status" aria-live="polite"></p>
                     </div>

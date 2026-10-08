@@ -3,6 +3,10 @@ const gamesView = document.getElementById("gamesView");
 const billiardsView = document.getElementById("billiardsView");
 const userBar = document.getElementById("userBar");
 const currentUser = document.getElementById("currentUser");
+const nicknameButton = document.getElementById("nicknameButton");
+const nicknameForm = document.getElementById("nicknameForm");
+const nicknameInput = document.getElementById("nicknameInput");
+const nicknameStatus = document.getElementById("nicknameStatus");
 const authForm = document.getElementById("authForm");
 const authStatus = document.getElementById("authStatus");
 const passwordInput = document.getElementById("password");
@@ -14,12 +18,21 @@ const adminLoginStatus = document.getElementById("adminLoginStatus");
 const createAccountForm = document.getElementById("createAccountForm");
 const createAccountStatus = document.getElementById("createAccountStatus");
 const adminConsole = document.getElementById("adminConsole");
+const adminAccountList = document.getElementById("adminAccountList");
+const accountListStatus = document.getElementById("accountListStatus");
 const roomActions = document.getElementById("roomActions");
+const roomDirectory = document.getElementById("roomDirectory");
+const roomDirectoryStatus = document.getElementById("roomDirectoryStatus");
+const roomDirectoryList = document.getElementById("roomDirectoryList");
 const roomPanel = document.getElementById("roomPanel");
 let roomPollTimer = null;
 let roomRefreshInFlight = false;
+let roleSwitchInFlight = false;
+let roomDirectoryPollTimer = null;
+let roomDirectoryRefreshInFlight = false;
 let currentRoom = null;
 let currentUsername = "";
+let currentNickname = "";
 const scoreDrafts = new Map();
 const scoreDraftVersions = new Map();
 const ROOM_POLL_INTERVAL_MS = 100;
@@ -45,9 +58,12 @@ function showAdminLogin() {
     adminLoginStatus.textContent = "";
 }
 
-function showAdminConsole(username) {
+function showAdminConsole(username, nickname = username) {
     currentUsername = username;
-    currentUser.textContent = username;
+    currentNickname = nickname;
+    currentUser.textContent = currentNickname;
+    nicknameButton.classList.add("hidden");
+    nicknameForm.classList.add("hidden");
     authView.classList.remove("hidden");
     document.getElementById("authHeading").classList.add("hidden");
     gamesView.classList.add("hidden");
@@ -58,6 +74,66 @@ function showAdminConsole(username) {
     adminConsole.classList.remove("hidden");
     userBar.classList.remove("hidden");
     createAccountStatus.textContent = "";
+    loadAdminAccounts();
+}
+
+async function loadAdminAccounts() {
+    accountListStatus.textContent = "正在加载用户列表…";
+    accountListStatus.classList.remove("success");
+    try {
+        const result = await request("/api/admin/accounts");
+        adminAccountList.replaceChildren();
+        if (!result.accounts.length) {
+            const emptyMessage = document.createElement("li");
+            emptyMessage.className = "admin-account-list-empty";
+            emptyMessage.textContent = "暂无用户账号。";
+            adminAccountList.append(emptyMessage);
+        }
+        for (const account of result.accounts) {
+            const item = document.createElement("li");
+            item.className = "admin-account-item";
+            const details = document.createElement("div");
+            details.className = "admin-account-details";
+            const accountName = document.createElement("strong");
+            accountName.textContent = account.nickname || account.username;
+            const metadata = document.createElement("span");
+            metadata.textContent =
+                `账号：${account.username} · 创建于 ${new Date(account.created_at * 1000).toLocaleString()}`;
+            details.append(accountName, metadata);
+            const deleteButton = document.createElement("button");
+            deleteButton.className = "secondary admin-account-delete";
+            deleteButton.type = "button";
+            deleteButton.textContent = "删除";
+            deleteButton.addEventListener("click", () => deleteAdminAccount(account.username));
+            item.append(details, deleteButton);
+            adminAccountList.append(item);
+        }
+        accountListStatus.textContent = `共 ${result.accounts.length} 个用户账号。`;
+        accountListStatus.classList.add("success");
+    } catch (error) {
+        accountListStatus.textContent = error.message;
+    }
+}
+
+async function deleteAdminAccount(username) {
+    if (!window.confirm(
+        `确定删除账号 ${username} 吗？该账号关联开放房间时无法删除；历史对局保留，但用户身份会匿名化。`
+    )) {
+        return;
+    }
+    accountListStatus.textContent = `正在删除账号 ${username}…`;
+    accountListStatus.classList.remove("success");
+    try {
+        await request("/api/admin/accounts/delete", {
+            method: "POST",
+            body: JSON.stringify({ username })
+        });
+        await loadAdminAccounts();
+        accountListStatus.textContent = `账号 ${username} 已删除。`;
+        accountListStatus.classList.add("success");
+    } catch (error) {
+        accountListStatus.textContent = error.message;
+    }
 }
 
 async function request(path, options = {}) {
@@ -82,13 +158,21 @@ function stopRoomPolling() {
     }
 }
 
+function stopRoomDirectoryPolling() {
+    if (roomDirectoryPollTimer !== null) {
+        window.clearInterval(roomDirectoryPollTimer);
+        roomDirectoryPollTimer = null;
+    }
+}
+
 function showGames(username = currentUsername) {
     stopRoomPolling();
+    stopRoomDirectoryPolling();
     currentRoom = null;
     scoreDrafts.clear();
     scoreDraftVersions.clear();
     currentUsername = username;
-    currentUser.textContent = username;
+    currentUser.textContent = currentNickname;
     authView.classList.add("hidden");
     billiardsView.classList.add("hidden");
     gamesView.classList.remove("hidden");
@@ -104,12 +188,93 @@ function showBilliardsMenu() {
     gamesView.classList.add("hidden");
     billiardsView.classList.remove("hidden");
     roomActions.classList.remove("hidden");
+    roomDirectory.classList.remove("hidden");
     roomPanel.classList.add("hidden");
     document.getElementById("backToGames").classList.remove("hidden");
     document.getElementById("billiardsHeading").innerHTML = "来一场<span>台球对决</span>";
     document.getElementById("billiardsDescription").textContent =
-        "创建房间邀请好友，或输入房间号加入一场游戏。";
+        "创建房间，或从下方未关闭的房间列表中直接加入好友的游戏。";
     roomActionStatus.textContent = "";
+    refreshRoomDirectory();
+    if (roomDirectoryPollTimer === null) {
+        roomDirectoryPollTimer = window.setInterval(refreshRoomDirectory, 1000);
+    }
+}
+
+async function refreshRoomDirectory() {
+    if (document.hidden || currentRoom || roomDirectoryRefreshInFlight) return;
+    roomDirectoryRefreshInFlight = true;
+    try {
+        const result = await request("/api/billiards/rooms");
+        roomDirectoryList.replaceChildren();
+        if (!result.rooms.length) {
+            const emptyMessage = document.createElement("li");
+            emptyMessage.className = "room-directory-empty";
+            emptyMessage.textContent = "目前没有未关闭的房间。创建房间后，好友会在这里看到。";
+            roomDirectoryList.append(emptyMessage);
+        }
+        for (const room of result.rooms) {
+            const item = document.createElement("li");
+            item.className = "room-directory-item";
+            const info = document.createElement("div");
+            info.className = "room-directory-info";
+            const code = document.createElement("div");
+            code.className = "room-directory-code";
+            code.textContent = room.room_code;
+            const status = document.createElement("span");
+            status.className = `room-directory-phase ${room.status}`;
+            status.textContent = room.status === "lobby" ? "等待中" : "游戏中";
+            const meta = document.createElement("div");
+            meta.className = "room-directory-meta";
+            const host = document.createElement("span");
+            host.textContent = `房主：${room.host_nickname}`;
+            const players = document.createElement("span");
+            players.textContent = `玩家 ${room.player_count} · 裁判 ${room.referee_count}`;
+            meta.append(host, players);
+            const button = document.createElement("button");
+            const mayJoin = room.status === "lobby";
+            const canReturn = Boolean(room.my_role);
+            const mayEnter = mayJoin || canReturn;
+            button.className = mayJoin && !canReturn ? "primary" : "secondary";
+            button.type = "button";
+            button.disabled = !mayEnter;
+            button.textContent = room.status !== "lobby"
+                ? canReturn ? "按原身份返回" : "游戏中"
+                : canReturn
+                    ? "重新进入房间"
+                    : "加入房间";
+            button.addEventListener("click", () => joinListedRoom(room, button));
+            info.append(code, status, meta);
+            item.append(info, button);
+            roomDirectoryList.append(item);
+        }
+        roomDirectoryStatus.textContent = `共 ${result.rooms.length} 个未关闭房间。`;
+        roomDirectoryStatus.classList.remove("success");
+    } catch (error) {
+        roomDirectoryStatus.textContent = error.message;
+        roomDirectoryStatus.classList.remove("success");
+    } finally {
+        roomDirectoryRefreshInFlight = false;
+    }
+}
+
+async function joinListedRoom(room, button) {
+    button.disabled = true;
+    roomActionStatus.classList.remove("success");
+    roomActionStatus.textContent = "正在连接房间…";
+    try {
+        const snapshot = await request("/api/billiards/join", {
+            method: "POST",
+            body: JSON.stringify({ room_code: room.room_code })
+        });
+        roomActionStatus.textContent = "";
+        await enterRoom(snapshot);
+    } catch (error) {
+        roomActionStatus.textContent = error.message;
+        await refreshRoomDirectory();
+    } finally {
+        button.disabled = false;
+    }
 }
 
 function appendCard(container, card, pottedNumbers, canToggle) {
@@ -186,9 +351,10 @@ function createMemberElement(room, member, pottedNumbers) {
     info.className = "member-info";
     const name = document.createElement("span");
     name.className = "member-name";
+    const nickname = member.nickname;
     name.textContent = member.username === room.host_username
-        ? `${member.username}（房主）`
-        : member.username;
+        ? `${nickname}（房主）`
+        : nickname;
     const memberHeading = document.createElement("div");
     memberHeading.className = "member-heading";
     memberHeading.append(name);
@@ -219,7 +385,7 @@ function createMemberElement(room, member, pottedNumbers) {
         const canEditScore = room.role === "referee"
             || (member.active && member.username === currentUsername);
         scoreInput.disabled = !canEditScore;
-        scoreInput.setAttribute("aria-label", `${member.username}的分数`);
+        scoreInput.setAttribute("aria-label", `${nickname}的分数`);
         scoreInput.addEventListener("focus", () => {
             if (!scoreDrafts.has(member.username)) {
                 scoreInput.dataset.editVersion = scoreInput.dataset.scoreVersion;
@@ -317,6 +483,13 @@ function renderMembers(room, forceCardRender = false) {
             }
             renderedUsernames.add(username);
             if (item === preservedItem) {
+                const nickname = member.nickname;
+                const name = item.querySelector(".member-name");
+                if (name) {
+                    name.textContent = member.username === room.host_username
+                        ? `${nickname}（房主）`
+                        : nickname;
+                }
                 const badge = item.querySelector(".member-info > .member-badge");
                 if (badge) updateMemberBadge(badge, room, member);
                 const input = item.querySelector(".member-score-input");
@@ -454,9 +627,9 @@ function renderRoom(room, forceCardRender = false) {
             ? "抽牌已完成"
             : "抽牌进行中";
     document.getElementById("roomMemberCount").textContent =
-        `${room.player_count} / ${room.capacity} 位玩家`;
+        `${room.member_count} 位成员 · 玩家 ${room.player_count} · 裁判 ${room.referee_count}`;
     document.getElementById("roomSummary").textContent =
-        `房主：${room.host_username}　·　已准备：${room.ready_count} / ${room.player_count}`;
+        `房主：${room.host_nickname}　·　已准备：${room.ready_count} / ${room.player_count}`;
     const pocketedCount = room.potted_numbers.length;
     document.getElementById("roomSummary").textContent +=
         `　·　已进球号码：${pocketedCount ? room.potted_numbers.join("、") : "无"}`;
@@ -474,14 +647,26 @@ function renderRoom(room, forceCardRender = false) {
         (member) => member.username === currentUsername && member.role === "player"
     );
     const readyButton = document.getElementById("readyButton");
+    const switchRoleButton = document.getElementById("switchRoleButton");
     const startButton = document.getElementById("startButton");
     readyButton.classList.toggle(
         "hidden", room.status !== "lobby" || room.role !== "player"
     );
     if (ownPlayer) {
-        readyButton.textContent = ownPlayer.ready ? "取消准备" : "我已准备";
+        readyButton.textContent = ownPlayer.ready ? "取消准备" : "准备";
     }
-    const allReady = room.player_count === room.capacity
+    switchRoleButton.classList.toggle("hidden", room.status !== "lobby");
+    const cannotBecomeReferee = room.role === "player" && room.player_count <= 1;
+    switchRoleButton.disabled = roleSwitchInFlight
+        || room.status !== "lobby"
+        || cannotBecomeReferee;
+    switchRoleButton.textContent = room.role === "player"
+        ? "切换为裁判"
+        : "切换为玩家";
+    switchRoleButton.title = cannotBecomeReferee
+        ? "房间至少需要两名玩家，才能切换为裁判"
+        : "";
+    const allReady = room.player_count >= 2
         && room.ready_count === room.player_count;
     startButton.classList.toggle("hidden", room.status !== "lobby" || !room.is_host);
     startButton.disabled = !allReady;
@@ -499,9 +684,13 @@ function renderRoom(room, forceCardRender = false) {
     }
     document.getElementById("drawCount").max = String(Math.min(15, Math.max(1, 54)));
     roomStatus.textContent = room.status === "lobby"
-        ? (room.player_count < room.capacity
-            ? `等待好友加入：当前 ${room.player_count} / ${room.capacity} 人。`
-            : "所有玩家已加入，请点击“我已准备”，房主即可开始游戏。")
+        ? room.role === "referee"
+            ? "等待中：你可以随时切换为玩家，房主开始游戏后可查看抽牌结果。"
+            : room.player_count < 2
+                ? "至少需要两名玩家才能开始游戏；仅剩一名玩家时不能切换为裁判。"
+                : room.ready_count === room.player_count
+                    ? "所有玩家已准备，房主可以开始游戏。"
+                    : "等待所有玩家准备，房主即可开始游戏。"
         : room.role === "referee"
             ? "裁判视图：玩家抽牌后，结果会自动显示在房间成员列表中。"
             : ownPlayer && ownPlayer.cards.length
@@ -552,10 +741,12 @@ async function setPocketed(number, pocketed, cardButton) {
 }
 
 async function enterRoom(room) {
+    stopRoomDirectoryPolling();
     authView.classList.add("hidden");
     gamesView.classList.add("hidden");
     billiardsView.classList.remove("hidden");
-    currentUser.textContent = currentUsername;
+    roomDirectory.classList.add("hidden");
+    currentUser.textContent = currentNickname;
     userBar.classList.remove("hidden");
     renderRoom(room);
 }
@@ -612,6 +803,8 @@ authForm.addEventListener("submit", async (event) => {
             body: JSON.stringify(data)
         });
         currentUsername = result.username;
+        currentNickname = result.nickname;
+        nicknameButton.classList.remove("hidden");
         await openSignedInHome();
     } catch (error) {
         authStatus.textContent = error.message;
@@ -634,7 +827,7 @@ adminLoginForm.addEventListener("submit", async (event) => {
             method: "POST",
             body: JSON.stringify(credentials)
         });
-        showAdminConsole(result.username);
+        showAdminConsole(result.username, result.nickname);
         adminLoginForm.reset();
     } catch (error) {
         adminLoginStatus.textContent = error.message;
@@ -660,6 +853,7 @@ createAccountForm.addEventListener("submit", async (event) => {
         createAccountStatus.textContent = `账号 ${result.username} 已创建。`;
         createAccountStatus.classList.add("success");
         createAccountForm.reset();
+        await loadAdminAccounts();
     } catch (error) {
         createAccountStatus.textContent = error.message;
         createAccountStatus.classList.remove("success");
@@ -667,6 +861,9 @@ createAccountForm.addEventListener("submit", async (event) => {
         button.disabled = false;
     }
 });
+
+document.getElementById("refreshAccounts").addEventListener("click", loadAdminAccounts);
+document.getElementById("refreshRoomDirectory").addEventListener("click", refreshRoomDirectory);
 
 document.getElementById("logoutButton").addEventListener("click", async () => {
     try {
@@ -678,6 +875,8 @@ document.getElementById("logoutButton").addEventListener("click", async () => {
         gamesView.classList.add("hidden");
         billiardsView.classList.add("hidden");
         userBar.classList.add("hidden");
+        nicknameButton.classList.add("hidden");
+        nicknameForm.classList.add("hidden");
         authView.classList.remove("hidden");
         authForm.reset();
         adminLoginForm.reset();
@@ -688,14 +887,58 @@ document.getElementById("logoutButton").addEventListener("click", async () => {
     }
 });
 
+document.getElementById("nicknameButton").addEventListener("click", () => {
+    nicknameInput.value = currentNickname;
+    nicknameStatus.textContent = "";
+    nicknameStatus.classList.remove("success");
+    nicknameForm.classList.remove("hidden");
+    nicknameInput.focus();
+});
+
+document.getElementById("cancelNickname").addEventListener("click", () => {
+    nicknameForm.classList.add("hidden");
+    nicknameStatus.textContent = "";
+});
+
+nicknameForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = nicknameForm.querySelector("button[type='submit']");
+    button.disabled = true;
+    nicknameStatus.textContent = "正在保存昵称…";
+    nicknameStatus.classList.remove("success");
+    try {
+        const result = await request("/api/profile/nickname", {
+            method: "POST",
+            body: JSON.stringify({ nickname: nicknameInput.value.trim() })
+        });
+        currentNickname = result.nickname;
+        currentUser.textContent = currentNickname;
+        if (currentRoom) {
+            const ownMember = currentRoom.players.find(
+                (member) => member.username === currentUsername
+            );
+            if (ownMember) ownMember.nickname = currentNickname;
+            if (currentRoom.host_username === currentUsername) {
+                currentRoom.host_nickname = currentNickname;
+            }
+            renderRoom(currentRoom, true);
+        }
+        nicknameStatus.textContent = "昵称已更新。";
+        nicknameStatus.classList.add("success");
+        nicknameForm.classList.add("hidden");
+    } catch (error) {
+        nicknameStatus.textContent = error.message;
+    } finally {
+        button.disabled = false;
+    }
+});
+
 document.getElementById("billiardsCard").addEventListener("click", showBilliardsMenu);
 document.getElementById("backToGames").addEventListener("click", () => showGames());
 
 document.getElementById("createRoomForm").addEventListener("submit", (event) => {
     event.preventDefault();
-    submitRoomAction(event.currentTarget, "/api/billiards/rooms", () => ({
-        capacity: Number(document.getElementById("roomCapacity").value)
-    }));
+    submitRoomAction(event.currentTarget, "/api/billiards/rooms", () => ({}));
 });
 document.getElementById("joinRoomForm").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -703,13 +946,6 @@ document.getElementById("joinRoomForm").addEventListener("submit", (event) => {
         room_code: document.getElementById("joinRoomCode").value.trim()
     }));
 });
-document.getElementById("refereeForm").addEventListener("submit", (event) => {
-    event.preventDefault();
-    submitRoomAction(event.currentTarget, "/api/billiards/referee", () => ({
-        room_code: document.getElementById("refereeRoomCode").value.trim()
-    }));
-});
-
 document.getElementById("readyButton").addEventListener("click", async () => {
     if (!currentRoom) return;
     const ownPlayer = currentRoom.players.find(
@@ -722,6 +958,25 @@ document.getElementById("readyButton").addEventListener("click", async () => {
         }));
     } catch (error) {
         roomStatus.textContent = error.message;
+    }
+});
+document.getElementById("switchRoleButton").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (roleSwitchInFlight || !currentRoom || currentRoom.status !== "lobby") return;
+    roleSwitchInFlight = true;
+    button.disabled = true;
+    try {
+        const role = currentRoom.role === "player" ? "referee" : "player";
+        renderRoom(await request("/api/billiards/role", {
+            method: "POST",
+            body: JSON.stringify({ role })
+        }));
+    } catch (error) {
+        roomStatus.textContent = error.message;
+        roomStatus.classList.remove("success");
+    } finally {
+        roleSwitchInFlight = false;
+        button.disabled = currentRoom?.status !== "lobby";
     }
 });
 document.getElementById("roomMembers").addEventListener("focusout", (event) => {
@@ -806,12 +1061,14 @@ document.getElementById("copyRoomCode").addEventListener("click", async () => {
 request("/api/me")
     .then((result) => {
         if (result.role === "admin") {
-            showAdminConsole(result.username);
+            showAdminConsole(result.username, result.nickname);
             return;
         }
         currentUsername = result.username;
+        currentNickname = result.nickname;
         userBar.classList.remove("hidden");
-        currentUser.textContent = currentUsername;
+        nicknameButton.classList.remove("hidden");
+        currentUser.textContent = currentNickname;
         return openSignedInHome();
     })
     .catch(() => {

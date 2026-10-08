@@ -20,7 +20,7 @@
                 radial-gradient(ellipse at 82% 12%, rgba(101, 139, 71, .2), transparent 33%),
                 radial-gradient(ellipse at 8% 92%, rgba(38, 107, 90, .18), transparent 35%),
                 var(--bg);
-            font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif;
+            font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
         }
 
         button, input { font: inherit; }
@@ -153,6 +153,16 @@
         .field input::placeholder { color: #67766e; }
         .field input:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(200, 241, 105, .1); }
         .hint { margin: 7px 0 0; color: #809087; font-size: 11px; }
+        .admin-account-section { padding-top: 22px; margin-top: 24px; border-top: 1px solid var(--line); }
+        .admin-account-heading, .admin-account-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .admin-account-heading h3 { margin: 0; font-size: 16px; }
+        .admin-account-list { display: grid; gap: 8px; padding: 0; margin: 12px 0 0; list-style: none; }
+        .admin-account-item { padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+        .admin-account-details { min-width: 0; }
+        .admin-account-details strong, .admin-account-details span { display: block; overflow-wrap: anywhere; }
+        .admin-account-details span { margin-top: 3px; color: var(--muted); font-size: 11px; }
+        .admin-account-delete { flex: 0 0 auto; color: #ffd0c7; }
+        .admin-account-list-empty { color: var(--muted); font-size: 12px; }
         .primary, .secondary {
             min-height: 47px;
             border: 0;
@@ -174,8 +184,22 @@
         .games-heading { margin-bottom: 33px; }
         .games-heading h1 { font-size: clamp(42px, 6vw, 66px); }
         .games-heading p { margin: 16px 0 0; color: var(--muted); font-size: 15px; }
-        .user-bar { gap: 14px; color: #c6d1c9; font-size: 13px; }
+        .user-bar { gap: 10px; color: #c6d1c9; font-size: 13px; }
         .user-bar strong { color: var(--green); }
+        .nickname-form { display: flex; align-items: center; gap: 6px; margin: 0; }
+        .nickname-input {
+            width: 125px;
+            height: 35px;
+            padding: 0 9px;
+            outline: none;
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            color: var(--text);
+            background: rgba(8, 15, 13, .44);
+            font-size: 16px;
+        }
+        .nickname-input:focus { border-color: var(--green); }
+        .nickname-status { color: var(--muted); font-size: 11px; }
         .secondary {
             min-height: 35px;
             padding: 0 13px;
@@ -234,6 +258,8 @@
         }
         @media (max-width: 560px) {
             .page-shell { min-height: 100svh; padding: 12px 16px; }
+            .topbar { flex-wrap: wrap; gap: 10px; }
+            .user-bar { width: 100%; justify-content: flex-end; }
             main { padding: 12px 0; }
             .auth-layout { display: block; width: 100%; max-width: 430px; }
             .auth-layout .intro { display: none; }
@@ -271,7 +297,7 @@
         .room-page-heading { margin-bottom: 25px; }
         .room-page-heading h1 { font-size: clamp(42px, 6vw, 66px); }
         .room-page-heading h1 span { color: var(--green); }
-        .room-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; }
+        .room-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
         .room-action-card, .room-panel {
             padding: 23px;
             border: 1px solid var(--line);
@@ -308,6 +334,20 @@
         .room-action-card > input + .primary { margin-top: 13px; }
         .inline-field { display: flex; align-items: center; gap: 9px; margin-bottom: 13px; color: var(--muted); }
         .room-action-status { min-height: 22px; }
+        .room-directory { padding: 22px; margin: 0 0 22px; border: 1px solid var(--line); border-radius: 17px; background: rgba(24, 39, 35, .56); }
+        .room-directory-heading, .room-directory-item { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+        .room-directory-heading h2 { margin: 0; font-size: 18px; }
+        .room-directory-heading p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+        .room-directory-status { min-height: 18px; }
+        .room-directory-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 10px; padding: 0; margin: 12px 0 0; list-style: none; }
+        .room-directory-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; min-width: 0; gap: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(7, 14, 12, .26); }
+        .room-directory-info { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; min-width: 0; gap: 6px 10px; }
+        .room-directory-code { min-width: 0; overflow-wrap: anywhere; color: var(--green); font-size: 16px; font-weight: 850; letter-spacing: .06em; }
+        .room-directory-phase { padding: 4px 8px; border-radius: 999px; color: #f0c886; background: rgba(240,200,134,.1); font-size: 10px; font-weight: 750; white-space: nowrap; }
+        .room-directory-phase.playing { color: #b9c9ff; background: rgba(137,160,255,.12); }
+        .room-directory-meta { display: flex; grid-column: 1 / -1; flex-wrap: wrap; gap: 3px 12px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+        .room-directory-item button { width: auto; min-width: 104px; min-height: 42px; padding: 0 14px; margin: 0; }
+        .room-directory-empty { grid-column: 1 / -1; padding: 12px 0; color: var(--muted); font-size: 12px; }
         .room-panel { padding: clamp(20px, 4vw, 32px); }
         .room-panel-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 21px; border-bottom: 1px solid var(--line); }
         .room-label { color: var(--muted); font-size: 11px; }
@@ -432,14 +472,46 @@
 
         @media (max-width: 850px) {
             .room-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-            .referee-action { grid-column: 1 / -1; }
         }
         @media (max-width: 560px) {
             .room-actions { grid-template-columns: 1fr; }
-            .referee-action { grid-column: auto; }
             .room-action-card p { min-height: 0; }
             .room-member { display: flex; flex-direction: column; }
             .member-cards { justify-content: flex-start; }
             .room-control-button { width: 100%; }
             .room-control-status { flex-basis: 100%; }
+        }
+
+        @supports (-webkit-touch-callout: none) {
+            html { -webkit-text-size-adjust: 100%; }
+            body { min-height: 100vh; min-height: 100svh; }
+        }
+
+        @media (pointer: coarse) {
+            .nickname-input { min-height: 44px; font-size: 16px; }
+            .member-score-input { min-height: 44px; }
+            .member-score-confirm { min-height: 44px; }
+            .room-directory-item button { min-height: 44px; }
+        }
+
+        @media (max-width: 560px) {
+            .page-shell {
+                padding-top: calc(12px + env(safe-area-inset-top, 0px));
+                padding-right: max(16px, env(safe-area-inset-right, 0px));
+                padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+                padding-left: max(16px, env(safe-area-inset-left, 0px));
+            }
+            .user-bar { justify-content: flex-start; flex-wrap: wrap; }
+            .nickname-form { width: 100%; flex-wrap: wrap; }
+            .nickname-input { flex: 1 1 110px; }
+            .user-bar > #logoutButton { margin-left: auto; }
+            .room-panel-top { align-items: flex-start; flex-wrap: wrap; }
+            .room-directory { padding: 16px; }
+            .room-directory-item { grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 14px; }
+            .room-directory-info { gap: 7px 10px; }
+            .room-directory-item button { width: 100%; }
+            .room-controls { gap: 8px; }
+            .draw-form { flex-wrap: wrap; align-items: center; }
+            .draw-form label { width: 100%; margin: 0; }
+            .my-cards .playing-card { width: clamp(78px, 22vw, 96px); min-height: 112px; }
         }

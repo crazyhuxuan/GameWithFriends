@@ -97,16 +97,27 @@ def initialize_database():
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                nickname TEXT NOT NULL DEFAULT '',
                 password_salt BLOB NOT NULL,
                 password_hash BLOB NOT NULL,
                 created_at INTEGER NOT NULL,
-                role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin'))
+                role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+                is_deleted INTEGER NOT NULL DEFAULT 0 CHECK (is_deleted IN (0, 1))
             )
             """
         )
         user_columns = {
             column["name"] for column in connection.execute("PRAGMA table_info(users)")
         }
+        if "nickname" not in user_columns:
+            connection.execute(
+                "ALTER TABLE users ADD COLUMN nickname TEXT NOT NULL DEFAULT ''"
+            )
+        if "is_deleted" not in user_columns:
+            connection.execute(
+                "ALTER TABLE users ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0"
+            )
+        connection.execute("UPDATE users SET nickname = username WHERE nickname = ''")
         role_was_missing = "role" not in user_columns
         if role_was_missing:
             connection.execute(
@@ -142,10 +153,17 @@ def initialize_database():
             salt = secrets.token_bytes(16)
             connection.execute(
                 """
-                INSERT INTO users (username, password_salt, password_hash, created_at, role)
-                VALUES (?, ?, ?, ?, 'admin')
+                INSERT INTO users
+                    (username, nickname, password_salt, password_hash, created_at, role)
+                VALUES (?, ?, ?, ?, ?, 'admin')
                 """,
-                (ADMIN_USERNAME, salt, hash_password(ADMIN_PASSWORD, salt), int(time.time())),
+                (
+                    ADMIN_USERNAME,
+                    ADMIN_USERNAME,
+                    salt,
+                    hash_password(ADMIN_PASSWORD, salt),
+                    int(time.time()),
+                ),
             )
         elif role_was_missing or admin["role"] != "admin":
             salt = secrets.token_bytes(16)
@@ -308,9 +326,10 @@ class AppHandler(BaseHTTPRequestHandler):
             connection.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
             return connection.execute(
                 """
-                SELECT users.id, users.username, users.role
+                SELECT users.id, users.username, users.nickname, users.role
                 FROM sessions JOIN users ON users.id = sessions.user_id
                 WHERE sessions.token_hash = ? AND sessions.expires_at > ?
+                  AND users.is_deleted = 0
                 """,
                 (token_hash, now),
             ).fetchone()
@@ -356,7 +375,99 @@ class AppHandler(BaseHTTPRequestHandler):
             if user is None:
                 self._send_json(401, {"error": "请先登录。"})
                 return
-            self._send_json(200, {"username": user["username"], "role": user["role"]})
+            self._send_json(
+                200,
+                {
+                    "username": user["username"],
+                    "nickname": user["nickname"],
+                    "role": user["role"],
+                },
+            )
+            return
+
+        if self.path == "/api/admin/accounts":
+            user = self._authenticated_user()
+            if user is None:
+                self._send_json(401, {"error": "请先登录。"})
+                return
+            if user["role"] != "admin":
+                self._send_json(403, {"error": "只有管理员可以查看用户列表。"})
+                return
+            with connect_database() as connection:
+                accounts = connection.execute(
+                    """
+                    SELECT username, nickname, created_at
+                    FROM users
+                    WHERE role = 'user' AND is_deleted = 0
+                    ORDER BY username COLLATE NOCASE
+                    """
+                ).fetchall()
+            self._send_json(
+                200,
+                {
+                    "accounts": [
+                        {
+                            "username": account["username"],
+                            "nickname": account["nickname"],
+                            "created_at": account["created_at"],
+                        }
+                        for account in accounts
+                    ]
+                },
+            )
+            return
+
+        if self.path == "/api/billiards/rooms":
+            user = self._authenticated_user()
+            if user is None:
+                self._send_json(401, {"error": "请先登录。"})
+                return
+            with connect_database() as connection:
+                rooms = connection.execute(
+                    """
+                    SELECT r.room_code, r.status, r.created_at,
+                           host.nickname AS host_nickname,
+                           (
+                               SELECT COUNT(*)
+                               FROM billiards_room_members AS players
+                               WHERE players.room_code = r.room_code
+                                 AND players.role = 'player' AND players.active = 1
+                           ) AS player_count,
+                           (
+                               SELECT COUNT(*)
+                               FROM billiards_room_members AS referees
+                               WHERE referees.room_code = r.room_code
+                                 AND referees.role = 'referee' AND referees.active = 1
+                           ) AS referee_count,
+                           (
+                               SELECT mine.role
+                               FROM billiards_room_members AS mine
+                               WHERE mine.room_code = r.room_code AND mine.user_id = ?
+                           ) AS my_role
+                    FROM billiards_rooms AS r
+                    JOIN users AS host ON host.id = r.host_user_id
+                    WHERE r.is_open = 1
+                    ORDER BY r.created_at DESC, r.room_code DESC
+                    """,
+                    (user["id"],),
+                ).fetchall()
+            self._send_json(
+                200,
+                {
+                    "rooms": [
+                        {
+                            "room_code": room["room_code"],
+                            "status": room["status"],
+                            "created_at": room["created_at"],
+                            "host_nickname": room["host_nickname"],
+                            "player_count": room["player_count"],
+                            "referee_count": room["referee_count"],
+                            "my_role": room["my_role"],
+                        }
+                        for room in rooms
+                    ]
+                },
+            )
             return
 
         if self.path == "/api/rooms/current":
@@ -386,11 +497,13 @@ class AppHandler(BaseHTTPRequestHandler):
             "/api/login": self._login,
             "/api/admin/login": self._admin_login,
             "/api/admin/accounts": self._admin_create_account,
+            "/api/admin/accounts/delete": self._admin_delete_account,
             "/api/logout": self._logout,
+            "/api/profile/nickname": self._profile_nickname,
             "/api/billiards/rooms": self._billiards_create,
             "/api/billiards/join": self._billiards_join,
-            "/api/billiards/referee": self._billiards_referee,
             "/api/billiards/ready": self._billiards_ready,
+            "/api/billiards/role": self._billiards_set_role,
             "/api/billiards/start": self._billiards_start,
             "/api/billiards/draw": self._billiards_draw,
             "/api/billiards/draw-one-more": self._billiards_draw_one_more,
@@ -404,7 +517,14 @@ class AppHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "请求的地址不存在。"})
             return
         try:
-            if self.path.startswith("/api/billiards/") or self.path == "/api/admin/accounts":
+            if (
+                self.path.startswith("/api/billiards/")
+                or self.path in (
+                    "/api/admin/accounts",
+                    "/api/admin/accounts/delete",
+                    "/api/profile/nickname",
+                )
+            ):
                 user = self._authenticated_user()
                 if user is None:
                     self._send_json(401, {"error": "请先登录。"})
@@ -420,8 +540,8 @@ class AppHandler(BaseHTTPRequestHandler):
     def _room_snapshot(self, connection, room_code, user_id):
         room = connection.execute(
             """
-            SELECT r.room_code, r.host_user_id, r.capacity, r.status, r.is_open, r.created_at,
-                   host.username AS host_username
+            SELECT r.room_code, r.host_user_id, r.status, r.is_open, r.created_at,
+                   host.username AS host_username, host.nickname AS host_nickname
             FROM billiards_rooms AS r JOIN users AS host ON host.id = r.host_user_id
             WHERE r.room_code = ?
             """,
@@ -431,7 +551,7 @@ class AppHandler(BaseHTTPRequestHandler):
             return None
         members = connection.execute(
             """
-            SELECT m.user_id, u.username, m.role, m.ready, m.cards, m.active,
+            SELECT m.user_id, u.username, u.nickname, m.role, m.ready, m.cards, m.active,
                    m.score, m.score_version
             FROM billiards_room_members AS m JOIN users AS u ON u.id = m.user_id
             WHERE m.room_code = ?
@@ -459,6 +579,7 @@ class AppHandler(BaseHTTPRequestHandler):
             cards = json.loads(member["cards"])
             entry = {
                 "username": member["username"],
+                "nickname": member["nickname"],
                 "role": member["role"],
                 "ready": bool(member["ready"]),
                 "active": bool(member["active"]),
@@ -474,9 +595,9 @@ class AppHandler(BaseHTTPRequestHandler):
             players.append(entry)
         return {
             "room_code": room["room_code"],
-            "capacity": room["capacity"],
             "status": room["status"],
             "host_username": room["host_username"],
+            "host_nickname": room["host_nickname"],
             "is_host": room["host_user_id"] == user_id,
             "role": own_member["role"],
             "players": players,
@@ -484,6 +605,10 @@ class AppHandler(BaseHTTPRequestHandler):
             "player_count": sum(
                 member["role"] == "player" and member["active"] for member in members
             ),
+            "referee_count": sum(
+                member["role"] == "referee" and member["active"] for member in members
+            ),
+            "member_count": sum(member["active"] for member in members),
             "drawn_count": sum(
                 member["role"] == "player"
                 and member["active"]
@@ -504,10 +629,7 @@ class AppHandler(BaseHTTPRequestHandler):
         return room_code
 
     def _billiards_create(self):
-        payload = self._read_json()
-        capacity = payload.get("capacity")
-        if isinstance(capacity, bool) or not isinstance(capacity, int) or not 2 <= capacity <= 54:
-            raise ValueError("房间人数需设置为 2–54 人。")
+        self._read_json()
         now = int(time.time())
         date_prefix = datetime.now().strftime("%Y%m%d")
         with connect_database() as connection:
@@ -532,7 +654,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 INSERT INTO billiards_rooms (room_code, host_user_id, capacity, status, created_at)
                 VALUES (?, ?, ?, 'lobby', ?)
                 """,
-                (room_code, self.current_user["id"], capacity, now),
+                (room_code, self.current_user["id"], 54, now),
             )
             connection.execute(
                 """
@@ -544,13 +666,13 @@ class AppHandler(BaseHTTPRequestHandler):
             room = self._room_snapshot(connection, room_code, self.current_user["id"])
         self._send_json(201, room)
 
-    def _join_room(self, role):
+    def _join_room(self):
         room_code = self._room_input()
         now = int(time.time())
         with connect_database() as connection:
             connection.execute("BEGIN IMMEDIATE")
             room = connection.execute(
-                "SELECT room_code, capacity, status, is_open FROM billiards_rooms WHERE room_code = ?",
+                "SELECT room_code, status, is_open FROM billiards_rooms WHERE room_code = ?",
                 (room_code,),
             ).fetchone()
             if room is None:
@@ -576,26 +698,13 @@ class AppHandler(BaseHTTPRequestHandler):
                 (room_code, self.current_user["id"]),
             ).fetchone()
             is_returning_member = room_membership is not None
-            if is_returning_member and room_membership["role"] != role:
-                self._send_json(409, {"error": "你不能以不同身份重复加入同一个房间。"})
-                return
+            role = room_membership["role"] if is_returning_member else "player"
             if not room["is_open"]:
                 self._send_json(409, {"error": "这个房间已关闭。"})
                 return
-            if role == "player":
-                if room["status"] != "lobby" and not is_returning_member:
-                    self._send_json(409, {"error": "游戏已经开始，不能再加入玩家。"})
-                    return
-                player_count = connection.execute(
-                    """
-                    SELECT COUNT(*) AS count FROM billiards_room_members
-                    WHERE room_code = ? AND role = 'player' AND active = 1
-                    """,
-                    (room_code,),
-                ).fetchone()["count"]
-                if player_count >= room["capacity"]:
-                    self._send_json(409, {"error": "房间人数已满。"})
-                    return
+            if room["status"] != "lobby" and not is_returning_member:
+                self._send_json(409, {"error": "游戏已经开始，不能再加入房间。"})
+                return
             if is_returning_member:
                 if not room_membership["active"]:
                     connection.execute(
@@ -622,10 +731,7 @@ class AppHandler(BaseHTTPRequestHandler):
         self._send_json(200, snapshot)
 
     def _billiards_join(self):
-        self._join_room("player")
-
-    def _billiards_referee(self):
-        self._join_room("referee")
+        self._join_room()
 
     def _billiards_ready(self):
         payload = self._read_json()
@@ -661,12 +767,85 @@ class AppHandler(BaseHTTPRequestHandler):
             )
         self._send_json(200, snapshot)
 
+    def _billiards_set_role(self):
+        payload = self._read_json()
+        role = payload.get("role")
+        if role != "player" and role != "referee":
+            raise ValueError("房间身份无效。")
+        with connect_database() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            membership = connection.execute(
+                """
+                SELECT m.room_code, m.role, r.status, r.host_user_id
+                FROM billiards_room_members AS m
+                JOIN billiards_rooms AS r ON r.room_code = m.room_code
+                WHERE m.user_id = ? AND m.active = 1
+                """,
+                (self.current_user["id"],),
+            ).fetchone()
+            if membership is None:
+                self._send_json(403, {"error": "请先加入房间。"})
+                return
+            if membership["status"] != "lobby":
+                self._send_json(409, {"error": "游戏开始后不能切换身份。"})
+                return
+            if membership["role"] == role:
+                self._send_json(409, {"error": "你当前已经是该身份。"})
+                return
+            if role == "referee":
+                player_count = connection.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM billiards_room_members
+                    WHERE room_code = ? AND role = 'player' AND active = 1
+                    """,
+                    (membership["room_code"],),
+                ).fetchone()["count"]
+                if player_count <= 1:
+                    self._send_json(
+                        409,
+                        {"error": "房间至少需要两名玩家，才能切换为裁判。"},
+                    )
+                    return
+                if membership["host_user_id"] == self.current_user["id"]:
+                    next_host = connection.execute(
+                        """
+                        SELECT user_id FROM billiards_room_members
+                        WHERE room_code = ? AND role = 'player' AND active = 1
+                          AND user_id != ?
+                        ORDER BY joined_at, user_id
+                        LIMIT 1
+                        """,
+                        (membership["room_code"], self.current_user["id"]),
+                    ).fetchone()
+                    if next_host is None:
+                        self._send_json(
+                            409,
+                            {"error": "没有其他玩家可以接任房主，暂时不能切换为裁判。"},
+                        )
+                        return
+                    connection.execute(
+                        "UPDATE billiards_rooms SET host_user_id = ? WHERE room_code = ?",
+                        (next_host["user_id"], membership["room_code"]),
+                    )
+            connection.execute(
+                """
+                UPDATE billiards_room_members SET role = ?, ready = 0
+                WHERE room_code = ? AND user_id = ?
+                """,
+                (role, membership["room_code"], self.current_user["id"]),
+            )
+            snapshot = self._room_snapshot(
+                connection, membership["room_code"], self.current_user["id"]
+            )
+        self._send_json(200, snapshot)
+
     def _billiards_start(self):
         with connect_database() as connection:
             connection.execute("BEGIN IMMEDIATE")
             membership = connection.execute(
                 """
-                SELECT r.room_code, r.status, r.host_user_id, r.capacity
+                SELECT r.room_code, r.status, r.host_user_id
                 FROM billiards_rooms AS r
                 JOIN billiards_room_members AS m ON m.room_code = r.room_code
                 WHERE m.user_id = ? AND m.active = 1
@@ -688,12 +867,6 @@ class AppHandler(BaseHTTPRequestHandler):
             ).fetchall()
             if len(players) < 2:
                 self._send_json(409, {"error": "至少需要两名玩家才能开始。"})
-                return
-            if len(players) < membership["capacity"]:
-                self._send_json(
-                    409,
-                    {"error": f"房间还未坐满，当前 {len(players)} / {membership['capacity']} 人。"},
-                )
                 return
             if not all(player["ready"] for player in players):
                 self._send_json(409, {"error": "请等待所有玩家准备就绪。"})
@@ -968,7 +1141,7 @@ class AppHandler(BaseHTTPRequestHandler):
             connection.execute("BEGIN IMMEDIATE")
             membership = connection.execute(
                 """
-                SELECT r.room_code, r.host_user_id, r.status, m.role
+                SELECT r.room_code, r.host_user_id
                 FROM billiards_room_members AS m
                 JOIN billiards_rooms AS r ON r.room_code = m.room_code
                 WHERE m.user_id = ? AND m.active = 1
@@ -999,15 +1172,14 @@ class AppHandler(BaseHTTPRequestHandler):
                     "UPDATE billiards_rooms SET is_open = 0 WHERE room_code = ?",
                     (room_code,),
                 )
-            elif (
-                membership["host_user_id"] == self.current_user["id"]
-                and membership["status"] == "lobby"
-            ):
+            elif membership["host_user_id"] == self.current_user["id"]:
                 next_host = connection.execute(
                     """
                     SELECT user_id FROM billiards_room_members
-                    WHERE room_code = ? AND role = 'player' AND active = 1
-                    ORDER BY joined_at, user_id LIMIT 1
+                    WHERE room_code = ? AND active = 1
+                    ORDER BY CASE WHEN role = 'player' THEN 0 ELSE 1 END,
+                             joined_at, user_id
+                    LIMIT 1
                     """,
                     (room_code,),
                 ).fetchone()
@@ -1044,15 +1216,119 @@ class AppHandler(BaseHTTPRequestHandler):
             with connect_database() as connection:
                 connection.execute(
                     """
-                    INSERT INTO users (username, password_salt, password_hash, created_at, role)
-                    VALUES (?, ?, ?, ?, 'user')
+                    INSERT INTO users
+                        (username, nickname, password_salt, password_hash, created_at, role, is_deleted)
+                    VALUES (?, ?, ?, ?, ?, 'user', 0)
                     """,
-                    (username, salt, password_hash, int(time.time())),
+                    (username, username, salt, password_hash, int(time.time())),
                 )
         except sqlite3.IntegrityError:
             self._send_json(409, {"error": "这个用户名已被注册，请换一个试试。"})
             return
         self._send_json(201, {"username": username, "message": "账号创建成功。"})
+
+    def _admin_delete_account(self):
+        if self.current_user["role"] != "admin":
+            self._send_json(403, {"error": "只有管理员可以删除用户账号。"})
+            return
+        payload = self._read_json()
+        username = payload.get("username")
+        if not isinstance(username, str) or not USERNAME_PATTERN.fullmatch(username):
+            raise ValueError("用户名格式无效。")
+        with connect_database() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            account = connection.execute(
+                """
+                SELECT id, username, role FROM users
+                WHERE username = ? COLLATE NOCASE AND is_deleted = 0
+                """,
+                (username,),
+            ).fetchone()
+            if account is None or account["role"] != "user":
+                self._send_json(404, {"error": "找不到可删除的用户账号。"})
+                return
+            has_open_room = connection.execute(
+                """
+                SELECT 1
+                FROM billiards_room_members AS m
+                JOIN billiards_rooms AS r ON r.room_code = m.room_code
+                WHERE r.is_open = 1 AND m.user_id = ? AND m.active = 1
+                LIMIT 1
+                """,
+                (account["id"],),
+            ).fetchone()
+            if has_open_room is not None:
+                self._send_json(
+                    409,
+                    {"error": "该用户仍关联开放房间，请先关闭或处理相关房间后再删除。"},
+                )
+                return
+            hosted_rooms = connection.execute(
+                """
+                SELECT r.room_code,
+                       (
+                           SELECT m.user_id
+                           FROM billiards_room_members AS m
+                           WHERE m.room_code = r.room_code AND m.active = 1
+                           ORDER BY CASE WHEN m.role = 'player' THEN 0 ELSE 1 END,
+                                    m.joined_at, m.user_id
+                           LIMIT 1
+                       ) AS next_host_id
+                FROM billiards_rooms AS r
+                WHERE r.host_user_id = ? AND r.is_open = 1
+                """,
+                (account["id"],),
+            ).fetchall()
+            for room in hosted_rooms:
+                if room["next_host_id"] is None:
+                    connection.execute(
+                        "UPDATE billiards_rooms SET is_open = 0 WHERE room_code = ?",
+                        (room["room_code"],),
+                    )
+                else:
+                    connection.execute(
+                        "UPDATE billiards_rooms SET host_user_id = ? WHERE room_code = ?",
+                        (room["next_host_id"], room["room_code"]),
+                    )
+            connection.execute(
+                """
+                UPDATE users
+                SET username = ?, nickname = '已删除用户',
+                    password_salt = ?, password_hash = ?, is_deleted = 1
+                WHERE id = ?
+                """,
+                (
+                    f"deleted_{account['id']}",
+                    secrets.token_bytes(16),
+                    secrets.token_bytes(32),
+                    account["id"],
+                ),
+            )
+            connection.execute("DELETE FROM sessions WHERE user_id = ?", (account["id"],))
+        self._send_json(200, {"username": account["username"], "message": "用户账号已删除。"})
+
+    def _profile_nickname(self):
+        if self.current_user["role"] == "admin":
+            self._send_json(403, {"error": "管理员账号不能修改昵称。"})
+            return
+        payload = self._read_json()
+        nickname = payload.get("nickname")
+        if not isinstance(nickname, str):
+            raise ValueError("昵称格式无效。")
+        nickname = nickname.strip()
+        if not 1 <= len(nickname) <= 20:
+            raise ValueError("昵称长度需为 1–20 个字符。")
+        if any(ord(character) < 32 or ord(character) == 127 for character in nickname):
+            raise ValueError("昵称不能包含控制字符。")
+        with connect_database() as connection:
+            connection.execute(
+                "UPDATE users SET nickname = ? WHERE id = ?",
+                (nickname, self.current_user["id"]),
+            )
+        self._send_json(
+            200,
+            {"username": self.current_user["username"], "nickname": nickname},
+        )
 
     def _login(self):
         client_ip = self._login_client_ip()
@@ -1064,8 +1340,8 @@ class AppHandler(BaseHTTPRequestHandler):
         with connect_database() as connection:
             user = connection.execute(
                 """
-                SELECT id, username, password_salt, password_hash, role
-                FROM users WHERE username = ?
+                SELECT id, username, nickname, password_salt, password_hash, role
+                FROM users WHERE username = ? AND is_deleted = 0
                 """,
                 (username,),
             ).fetchone()
@@ -1090,7 +1366,15 @@ class AppHandler(BaseHTTPRequestHandler):
             self._send_login_locked_response(remaining)
             return
         cookie = self._create_session(user["id"])
-        self._send_json(200, {"username": user["username"], "role": user["role"]}, [cookie])
+        self._send_json(
+            200,
+            {
+                "username": user["username"],
+                "nickname": user["nickname"],
+                "role": user["role"],
+            },
+            [cookie],
+        )
 
     def _admin_login(self):
         client_ip = self._login_client_ip()
@@ -1102,8 +1386,8 @@ class AppHandler(BaseHTTPRequestHandler):
         with connect_database() as connection:
             user = connection.execute(
                 """
-                SELECT id, username, password_salt, password_hash, role
-                FROM users WHERE username = ?
+                SELECT id, username, nickname, password_salt, password_hash, role
+                FROM users WHERE username = ? AND is_deleted = 0
                 """,
                 (username,),
             ).fetchone()
@@ -1126,7 +1410,13 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         cookie = self._create_session(user["id"])
         self._send_json(
-            200, {"username": user["username"], "role": user["role"]}, [cookie]
+            200,
+            {
+                "username": user["username"],
+                "nickname": user["nickname"],
+                "role": user["role"],
+            },
+            [cookie],
         )
 
     def _logout(self):
