@@ -53,6 +53,31 @@
         }
         .top-note { color: var(--muted); font-size: 13px; }
         main { display: grid; flex: 1; place-items: center; padding: 52px 0; }
+        .session-loading {
+            display: none;
+            align-items: center;
+            gap: 12px;
+            padding: 16px 20px;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            color: #d3ded5;
+            background: rgba(24, 39, 35, .72);
+            font-size: 13px;
+        }
+        html.session-checking .session-loading { display: flex; }
+        html.session-checking #authView { display: none; }
+        .session-loading-spinner {
+            width: 17px;
+            height: 17px;
+            border: 2px solid rgba(200,241,105,.22);
+            border-top-color: var(--green);
+            border-radius: 50%;
+            animation: session-loading-spin .8s linear infinite;
+        }
+        @keyframes session-loading-spin { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) {
+            .session-loading-spinner { animation: none; }
+        }
 
         .auth-layout {
             display: grid;

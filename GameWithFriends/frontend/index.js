@@ -1,4 +1,6 @@
 const authView = document.getElementById("authView");
+const sessionLoading = document.getElementById("sessionLoading");
+const sessionLoadingMessage = document.getElementById("sessionLoadingMessage");
 const gamesView = document.getElementById("gamesView");
 const billiardsView = document.getElementById("billiardsView");
 const userBar = document.getElementById("userBar");
@@ -25,8 +27,10 @@ const roomDirectory = document.getElementById("roomDirectory");
 const roomDirectoryStatus = document.getElementById("roomDirectoryStatus");
 const roomDirectoryList = document.getElementById("roomDirectoryList");
 const roomPanel = document.getElementById("roomPanel");
+const SESSION_HINT_KEY = "gfw-session-known";
 let roomPollTimer = null;
 let roomRefreshInFlight = false;
+let roomContextVersion = 0;
 let roleSwitchInFlight = false;
 let roomDirectoryPollTimer = null;
 let roomDirectoryRefreshInFlight = false;
@@ -37,7 +41,33 @@ const scoreDrafts = new Map();
 const scoreDraftVersions = new Map();
 const ROOM_POLL_INTERVAL_MS = 100;
 
+function setSessionHint(isKnown) {
+    try {
+        if (isKnown) {
+            localStorage.setItem(SESSION_HINT_KEY, "1");
+        } else {
+            localStorage.removeItem(SESSION_HINT_KEY);
+        }
+    } catch (error) {
+        console.warn("无法保存登录状态提示。", error);
+    }
+}
+
+function finishSessionCheck() {
+    document.documentElement.classList.remove("session-checking");
+    sessionLoading.classList.add("hidden");
+}
+
+function beginSessionCheck(message = "正在恢复登录状态…") {
+    sessionLoadingMessage.textContent = message;
+    sessionLoading.classList.remove("hidden");
+    document.documentElement.classList.add("session-checking");
+}
+
 function showUserLogin() {
+    setSessionHint(false);
+    finishSessionCheck();
+    authView.classList.remove("hidden");
     document.getElementById("authHeading").classList.remove("hidden");
     authForm.classList.remove("hidden");
     adminLoginForm.classList.add("hidden");
@@ -49,6 +79,8 @@ function showUserLogin() {
 }
 
 function showAdminLogin() {
+    finishSessionCheck();
+    authView.classList.remove("hidden");
     document.getElementById("authHeading").classList.add("hidden");
     authForm.classList.add("hidden");
     adminLoginForm.classList.remove("hidden");
@@ -59,6 +91,8 @@ function showAdminLogin() {
 }
 
 function showAdminConsole(username, nickname = username) {
+    setSessionHint(true);
+    finishSessionCheck();
     currentUsername = username;
     currentNickname = nickname;
     currentUser.textContent = currentNickname;
@@ -152,6 +186,8 @@ async function request(path, options = {}) {
 }
 
 function stopRoomPolling() {
+    roomContextVersion += 1;
+    roomRefreshInFlight = false;
     if (roomPollTimer !== null) {
         window.clearInterval(roomPollTimer);
         roomPollTimer = null;
@@ -166,6 +202,7 @@ function stopRoomDirectoryPolling() {
 }
 
 function showGames(username = currentUsername) {
+    finishSessionCheck();
     stopRoomPolling();
     stopRoomDirectoryPolling();
     currentRoom = null;
@@ -710,9 +747,19 @@ function renderRoom(room, forceCardRender = false) {
 
 async function refreshRoom() {
     if (document.hidden || !currentRoom || roomRefreshInFlight) return;
+    const contextVersion = roomContextVersion;
+    const requestedUsername = currentUsername;
+    const requestedRoomCode = currentRoom.room_code;
     roomRefreshInFlight = true;
     try {
         const result = await request("/api/rooms/current");
+        if (
+            contextVersion !== roomContextVersion
+            || requestedUsername !== currentUsername
+            || requestedRoomCode !== currentRoom?.room_code
+        ) {
+            return;
+        }
         if (!result.room) {
             showBilliardsMenu();
             roomActionStatus.textContent = "房间已关闭或你已离开房间。";
@@ -721,10 +768,18 @@ async function refreshRoom() {
 
         renderRoom(result.room);
     } catch (error) {
-        roomStatus.textContent = error.message;
-        roomStatus.classList.remove("success");
+        if (
+            contextVersion === roomContextVersion
+            && requestedUsername === currentUsername
+            && requestedRoomCode === currentRoom?.room_code
+        ) {
+            roomStatus.textContent = error.message;
+            roomStatus.classList.remove("success");
+        }
     } finally {
-        roomRefreshInFlight = false;
+        if (contextVersion === roomContextVersion) {
+            roomRefreshInFlight = false;
+        }
     }
 }
 
@@ -743,6 +798,8 @@ async function setPocketed(number, pocketed, cardButton) {
 }
 
 async function enterRoom(room) {
+    stopRoomPolling();
+    finishSessionCheck();
     stopRoomDirectoryPolling();
     authView.classList.add("hidden");
     gamesView.classList.add("hidden");
@@ -806,6 +863,8 @@ authForm.addEventListener("submit", async (event) => {
         });
         currentUsername = result.username;
         currentNickname = result.nickname;
+        setSessionHint(true);
+        beginSessionCheck("登录成功，正在进入游戏…");
         nicknameButton.classList.remove("hidden");
         await openSignedInHome();
     } catch (error) {
@@ -1013,7 +1072,7 @@ document.getElementById("restartButton").addEventListener("click", async (event)
 document.getElementById("leaveButton").addEventListener("click", async () => {
     try {
         await request("/api/billiards/leave", { method: "POST", body: "{}" });
-        showGames();
+        showBilliardsMenu();
     } catch (error) {
         roomStatus.textContent = error.message;
     }
@@ -1067,12 +1126,16 @@ request("/api/me")
         }
         currentUsername = result.username;
         currentNickname = result.nickname;
+        setSessionHint(true);
+        beginSessionCheck();
         userBar.classList.remove("hidden");
         nicknameButton.classList.remove("hidden");
         currentUser.textContent = currentNickname;
         return openSignedInHome();
     })
     .catch(() => {
+        setSessionHint(false);
+        finishSessionCheck();
         authView.classList.remove("hidden");
         gamesView.classList.add("hidden");
         billiardsView.classList.add("hidden");

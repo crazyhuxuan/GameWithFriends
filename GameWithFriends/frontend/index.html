@@ -6,6 +6,15 @@
     <meta name="theme-color" content="#101a18">
     <title>GameWithFriends — 和朋友一起玩</title>
     <link rel="stylesheet" href="index.css">
+    <script>
+        try {
+            if (localStorage.getItem("gfw-session-known") === "1") {
+                document.documentElement.classList.add("session-checking");
+            }
+        } catch (error) {
+            console.warn("无法读取登录状态提示。", error);
+        }
+    </script>
 </head>
 <body>
     <div class="page-shell">
@@ -26,6 +35,10 @@
         </header>
 
         <main>
+            <div class="session-loading" id="sessionLoading" role="status" aria-live="polite">
+                <span class="session-loading-spinner" aria-hidden="true"></span>
+                <span id="sessionLoadingMessage">正在恢复登录状态…</span>
+            </div>
             <section class="auth-layout" id="authView" aria-label="账号登录与管理员账号管理">
                 <div class="intro">
                     <div class="eyebrow">YOUR FRIENDS, YOUR GAME</div>
