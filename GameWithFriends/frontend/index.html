@@ -201,7 +201,10 @@
                                 <h2>抽取你的台球号码</h2>
                                 <p>点击牌面标记进球；同号码的牌会同步标记。再次点击可撤销。</p>
                             </div>
-                            <div class="deck-mark" aria-hidden="true">A<br><span>♠</span></div>
+                            <button class="draw-more-button hidden" id="drawMoreButton" type="button" aria-label="从剩余牌库再抽一张" title="从剩余牌库再抽一张">
+                                <span class="draw-more-icon" aria-hidden="true">＋</span>
+                                <span>再抽一张</span>
+                            </button>
                         </div>
                         <form class="draw-form" id="drawForm">
                             <label for="drawCount">抽牌数量</label>
@@ -209,7 +212,6 @@
                             <button class="primary" id="drawButton" type="submit">抽牌</button>
                         </form>
                         <div class="my-cards hidden" id="myCards"></div>
-                        <button class="primary draw-more-button hidden" id="drawMoreButton" type="button">从剩余牌库再抽一张</button>
                     </section>
                 </section>
 

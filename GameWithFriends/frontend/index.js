@@ -683,7 +683,7 @@ function renderRoom(room, forceCardRender = false) {
         renderOwnCards(ownPlayer?.cards ?? [], room.potted_numbers, forceCardRender);
     }
     document.getElementById("drawCount").max = String(Math.min(15, Math.max(1, 54)));
-    roomStatus.textContent = room.status === "lobby"
+    const roomStatusText = room.status === "lobby"
         ? room.role === "referee"
             ? "等待中：你可以随时切换为玩家，房主开始游戏后可查看抽牌结果。"
             : room.player_count < 2
@@ -698,6 +698,9 @@ function renderRoom(room, forceCardRender = false) {
                     ? "抽牌完成，开始对局。"
                     : "抽牌完成，等待其他玩家抽牌。")
                 : "游戏已开始，选择数量后抽牌。";
+    if (roomStatus.textContent !== roomStatusText) {
+        roomStatus.textContent = roomStatusText;
+    }
     roomStatus.classList.remove("success");
     if (room.status === "playing") roomStatus.classList.add("success");
     if (roomPollTimer === null) {
@@ -727,7 +730,6 @@ async function refreshRoom() {
 
 async function setPocketed(number, pocketed, cardButton) {
     cardButton.disabled = true;
-    roomStatus.textContent = "正在同步进球状态…";
     try {
         renderRoom(await request("/api/billiards/set-pocketed", {
             method: "POST",
@@ -1034,7 +1036,6 @@ document.getElementById("drawForm").addEventListener("submit", async (event) => 
 document.getElementById("drawMoreButton").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     button.disabled = true;
-    roomStatus.textContent = "正在从剩余牌库抽牌…";
     try {
         renderRoom(await request("/api/billiards/draw-one-more", {
             method: "POST",
