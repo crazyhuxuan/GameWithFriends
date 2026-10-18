@@ -208,6 +208,11 @@ function showGames(username = currentUsername) {
     currentRoom = null;
     scoreDrafts.clear();
     scoreDraftVersions.clear();
+    const myCards = document.getElementById("myCards");
+    if (myCards) {
+        delete myCards.dataset.cardSignature;
+        myCards.replaceChildren();
+    }
     currentUsername = username;
     currentUser.textContent = currentNickname;
     authView.classList.add("hidden");
@@ -222,6 +227,11 @@ function showBilliardsMenu() {
     currentRoom = null;
     scoreDrafts.clear();
     scoreDraftVersions.clear();
+    const myCards = document.getElementById("myCards");
+    if (myCards) {
+        delete myCards.dataset.cardSignature;
+        myCards.replaceChildren();
+    }
     gamesView.classList.add("hidden");
     billiardsView.classList.remove("hidden");
     roomActions.classList.remove("hidden");
@@ -436,6 +446,9 @@ function createMemberElement(room, member, pottedNumbers) {
         confirmButton.textContent = "确认分数";
         confirmButton.disabled = !canEditScore
             || scoreInput.value === scoreInput.dataset.confirmedScore;
+        confirmButton.addEventListener("mousedown", (event) => {
+            event.preventDefault();
+        });
         scoreInput.addEventListener("input", () => {
             if (scoreInput.value === scoreInput.dataset.confirmedScore) {
                 scoreDrafts.delete(member.username);
@@ -465,6 +478,10 @@ function createMemberElement(room, member, pottedNumbers) {
     if (room.role === "referee" && member.role === "player" && room.status === "playing") {
         const cards = document.createElement("div");
         cards.className = "member-card-groups";
+        cards.dataset.cardSignature = [...member.cards]
+            .sort((a, b) => a.number - b.number || a.label.localeCompare(b.label))
+            .map((c) => `${c.number}:${c.label}:${c.extra_draw ? 1 : 0}`)
+            .join(",");
         if (member.cards.length) {
             appendCardGroup(cards, "手牌", member.cards, pottedNumbers, true);
         } else {
@@ -499,11 +516,10 @@ function renderMembers(room, forceCardRender = false) {
     const focusedInput = document.activeElement?.classList.contains("member-score-input")
         ? document.activeElement
         : null;
-    const hoveredItem = !forceCardRender
-        ? memberList.querySelector(".member-score-controls:hover, .playing-card:hover")
-            ?.closest(".room-member")
-        : null;
-    const preservedItem = focusedInput?.closest(".room-member") ?? hoveredItem;
+    const preservedItem = focusedInput?.closest(".room-member")
+        ?? (scoreDrafts.size > 0
+            ? Array.from(memberList.children).find((item) => scoreDrafts.has(item.dataset.username)) ?? null
+            : null);
     if (preservedItem && !forceCardRender) {
         updateRenderedCardStates(memberList, room.potted_numbers);
         const pottedNumbers = new Set(room.potted_numbers);
@@ -542,6 +558,41 @@ function renderMembers(room, forceCardRender = false) {
                         confirmButton.disabled = input.disabled
                             || input.value === input.dataset.confirmedScore;
                     }
+                }
+                const unpottedCount = item.querySelector(".member-unpotted-count");
+                if (unpottedCount) {
+                    if (room.status === "playing" && member.role === "player") {
+                        unpottedCount.textContent = `未进球 ${member.unpotted_card_count} 张`;
+                    } else {
+                        unpottedCount.remove();
+                    }
+                }
+                const existingCards = item.querySelector(".member-card-groups");
+                if (room.role === "referee" && member.role === "player" && room.status === "playing") {
+                    const signature = [...member.cards]
+                        .sort((a, b) => a.number - b.number || a.label.localeCompare(b.label))
+                        .map((c) => `${c.number}:${c.label}:${c.extra_draw ? 1 : 0}`)
+                        .join(",");
+                    if (!existingCards || existingCards.dataset.cardSignature !== signature) {
+                        const newCards = document.createElement("div");
+                        newCards.className = "member-card-groups";
+                        newCards.dataset.cardSignature = signature;
+                        if (member.cards.length) {
+                            appendCardGroup(newCards, "手牌", member.cards, pottedNumbers, true);
+                        } else {
+                            const waiting = document.createElement("span");
+                            waiting.className = "member-badge";
+                            waiting.textContent = "尚未抽牌";
+                            newCards.append(waiting);
+                        }
+                        if (existingCards) {
+                            existingCards.replaceWith(newCards);
+                        } else {
+                            item.append(newCards);
+                        }
+                    }
+                } else if (existingCards) {
+                    existingCards.remove();
                 }
                 continue;
             }
@@ -632,21 +683,33 @@ function appendCardGroup(container, title, cards, pottedNumbers, canToggle) {
 function renderOwnCards(cards, pottedNumbers, forceCardRender = false) {
     const drawForm = document.getElementById("drawForm");
     const myCards = document.getElementById("myCards");
-    if (!forceCardRender && myCards.querySelector(".playing-card:hover")) {
-        updateRenderedCardStates(myCards, pottedNumbers);
-        return;
-    }
     if (!cards.length) {
+        delete myCards.dataset.cardSignature;
+        myCards.replaceChildren();
         drawForm.classList.remove("hidden");
         myCards.classList.add("hidden");
         document.getElementById("drawMoreButton").classList.add("hidden");
         return;
     }
+
+    const sortedCards = [...cards].sort(
+        (first, second) => first.number - second.number || first.label.localeCompare(second.label)
+    );
+    const signature = sortedCards
+        .map((card) => `${card.number}:${card.label}:${card.extra_draw ? 1 : 0}`)
+        .join(",");
+
+    if (!forceCardRender && myCards.dataset.cardSignature === signature) {
+        updateRenderedCardStates(myCards, pottedNumbers);
+        return;
+    }
+
+    myCards.dataset.cardSignature = signature;
     drawForm.classList.add("hidden");
     myCards.classList.remove("hidden");
     myCards.replaceChildren();
     const pottedSet = new Set(pottedNumbers);
-    appendCardGroup(myCards, "手牌", cards, pottedSet, true);
+    appendCardGroup(myCards, "手牌", sortedCards, pottedSet, true);
     document.getElementById("drawMoreButton").classList.remove("hidden");
 }
 
